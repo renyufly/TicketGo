@@ -1,21 +1,38 @@
+# GitHub Actions 的 CI（Continuous Integration持续集成）配置文件
+# 每次 push 代码或者提交 Pull Request 时，
+# GitHub 自动创建一台 Ubuntu 机器，检查 Go 后端和前端代码有没有问题
+
+# 这个 GitHub Actions 工作流的名字
 name: ci
 
+# on 表示什么时候运行这个 CI
 on:
   push:
   pull_request:
 
+# 表示 GitHub Actions 对仓库拥有什么权限
+# CI 只能读取仓库内容 （最小权限原则）
 permissions:
   contents: read
 
+# 一个 workflow 可以包含多个 job
 jobs:
   quality:
+    # 让 GitHub 准备一台最新版本的 Ubuntu 虚拟机来执行这些命令
     runs-on: ubuntu-latest
+    # 定义这个 job 具体需要执行哪些步骤
     steps:
+      # checkout Action：把仓库代码下载到 CI 的 Ubuntu 机器
       - uses: actions/checkout@v4
+      # 根据 go.mod 里的 Go 版本安装对应 Go
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      # 检查 Go 代码格式：检查所有.go 文件有没有经过 gofmt 格式化
+      # git ls-files -z：先找到 Git 仓库中所有被跟踪的 .go 文件 (-z：让 Git 使用 \0 分隔文件名)
+      # xargs -0：把前一个命令产生的内容，转换成后一个命令的参数 (-0：表示输入的文件名使用 NUL（\0） 分隔，而不是空格/换行分隔)
+      # gofmt -l：-l = list，找出格式不符合 gofmt 标准的 Go 文件，并打印文件名
       - name: Verify formatting
         run: |
           unformatted="$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)"
@@ -24,9 +41,11 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      # vet 做一些静态代码检查
       - name: Vet
         run: go vet ./...
       - name: Test
         run: go test ./...
       - name: Build
         run: go build ./...
+      # 检查前端
