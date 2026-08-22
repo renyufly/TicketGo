@@ -448,6 +448,98 @@ web/
 
 ---
 
+## Phase 2B：订单支付确认与超时关闭
+
+### 阶段定位与目标
+
+在 Phase 2 已经选定并验证 PostgreSQL 库存并发方案后，补齐同步订单的最小生命周期，让秒杀创建的 `pending` 订单能够进入 `paid`、`cancelled` 或 `expired` 终态，并正确处理支付、主动取消和超时关单之间的并发竞争。
+
+本阶段建立的是后续 Redis/Kafka 异步化之前的 PostgreSQL 正确性基线，不接入真实支付机构、不处理银行卡或支付凭证，也不拆分独立 Payment 服务。前端的“确认支付”按钮只调用受控演示接口来模拟“外部支付已经成功确认”，不得宣称具备生产支付能力。
+
+### 订单状态机与业务规则
+
+```text
+pending ──确认支付──→ paid
+   ├────用户取消───→ cancelled
+   └────超时关闭───→ expired
+```
+
+- `paid`、`cancelled`、`expired` 都是本阶段终态，终态之间禁止相互转换；
+- 只有 `pending` 可以确认支付、取消或超时关闭；支付、取消和超时任务同时发生时，只允许一个事务成功；
+- `paid` 不回补库存；`cancelled` 和 `expired` 必须在同一数据库事务中回补库存并更新秒杀记录；
+- 延续 Phase 1 的“一人一活动只能参加一次”规则：取消或过期后仍不能再次秒杀，避免悄悄改变既有唯一约束语义；
+- 重复提交同一订单的支付确认必须幂等，不得重复记账、重复变更库存或产生第二条支付记录；
+- 订单超时时间由后端在创建订单时计算并持久化，不能依赖浏览器倒计时决定是否过期；
+- 页面倒计时和按钮禁用只改善体验，数据库订单状态与后端事务仍是唯一正确性来源。
+
+### 实施步骤
+
+1. 扩展数据库模型与 migration：
+   - 为订单增加 `expires_at`、`paid_at`、必要的支付确认引用和查询索引；
+   - 增加最小支付确认记录表或等价的唯一约束，保证同一订单只确认一次；
+   - 更新订单状态 CHECK 约束，明确 `pending/paid/cancelled/expired`；
+   - migration 必须提供成对 up/down，并在一次性空库完成 up → down → up 验证。
+2. 固化订单创建规则：
+   - 新增 `ORDER_PAYMENT_TIMEOUT` 配置并设置安全默认值，例如 15 分钟；
+   - 秒杀创建订单时同时写入 `expires_at`；
+   - 配置必须经过正时长校验，时间计算使用可注入 clock，测试不得依赖真实等待。
+3. 实现受控演示支付确认：
+   - 新增 `POST /api/v1/orders/:id/pay`，只允许订单所属用户调用；
+   - 在事务内锁定订单，校验当前状态与 `expires_at`，再写支付确认记录并更新为 `paid`；
+   - 对同一订单的重复确认返回同一个已支付结果，保持幂等；
+   - 已取消、已过期或不属于当前用户的订单必须返回稳定错误码；
+   - 请求和日志不得包含银行卡、真实支付 Token 或其他敏感支付数据。
+4. 实现超时关单 worker：
+   - 周期性批量扫描 `status='pending' AND expires_at <= now()` 的订单；
+   - 使用 `FOR UPDATE SKIP LOCKED` 或等价安全方案支持多 worker 竞争，批量大小与扫描间隔均可配置；
+   - 每笔订单在同一事务内更新为 `expired`、回补库存并更新秒杀记录；
+   - worker 重启后能够继续收敛遗留过期订单，数据库短暂故障时有限退避，不能忙循环或静默丢单。
+5. 统一取消、支付与过期事务：
+   - 复用同一状态机校验，避免三个路径各自维护不一致规则；
+   - 用行锁或条件 UPDATE 保证支付、取消、过期三方竞争只有一个终态；
+   - 所有失败和 rollback 场景必须保持订单、库存、秒杀记录和支付确认记录一致；
+   - 对终态冲突、订单已过期和重复确认定义稳定领域错误及 HTTP 映射。
+6. 更新 React 演示页面：
+   - pending 订单显示剩余支付时间、“确认演示支付”和“取消订单”入口；
+   - paid/cancelled/expired 显示明确终态、支付/取消/过期时间，不再显示可执行按钮；
+   - 支付或取消成功后失效订单与活动库存查询，不能在前端自行推导最终状态；
+   - 明确标注这是本地演示支付，不收集或提交任何真实支付信息。
+7. 增加自动化测试与故障实验：
+   - 单测覆盖状态机、超时时间、重复支付和非法终态转换；
+   - PostgreSQL 集成测试覆盖 pending → paid、pending → cancelled、pending → expired 及库存回补；
+   - 并发测试覆盖支付 vs 取消、支付 vs 超时、取消 vs 超时，验证恰好一个终态成功；
+   - 注入支付记录写入失败、库存回补失败、事务 commit 失败和 PostgreSQL 暂停，验证完整 rollback 与恢复；
+   - E2E 覆盖页面/API 创建 pending、确认支付，以及短超时时间下自动变为 expired 的流程。
+8. 更新 `docs/database.md`、`docs/api.md`、React 页面说明、`step.md` 和阶段报告，记录状态机、并发策略、超时配置、故障恢复和真实支付延期边界。
+
+### 交付物
+
+- 订单支付/过期 migration、Repository、Service、Handler 与后台 worker；
+- `POST /api/v1/orders/:id/pay` 及更新后的订单响应字段和稳定错误码；
+- React 订单倒计时、演示支付和终态展示；
+- 状态机、并发竞争、事务回滚、worker 恢复的单元/集成/E2E 测试；
+- `docs/phase2b-order-lifecycle.md` 与更新后的数据库、API、README、`step.md`、`tree.txt`。
+
+### 阶段门禁
+
+- 每个订单最多从 pending 进入一个终态，任何并发测试中都不能同时出现 paid 与 cancelled/expired；
+- paid 订单库存保持已售，cancelled/expired 恰好回补一次，并持续满足 `available >= 0` 与 `sold + available = total`；
+- 重复支付确认幂等，不产生重复支付记录或第二次状态变更；
+- 超时 worker 可多实例安全运行，进程重启或 PostgreSQL 短暂故障后能够继续关闭遗留订单；
+- 普通用户只能操作自己的订单，admin 页面隐藏不能替代后端归属校验；
+- 页面能够完整演示 pending → paid、pending → cancelled、pending → expired 三条路径；
+- 前后端 typecheck、单测、真实 PostgreSQL integration/E2E、production build 全部通过；
+- 文档明确说明本阶段没有真实支付机构、退款、对账、独立 Payment 服务或支付敏感信息处理。
+
+### 明确不做
+
+- 不接入 Stripe、PayPal、支付宝、微信支付或银行卡收单；
+- 不实现真实支付回调签名、退款、拒付、分账、账单、财务对账或 PCI DSS 范围能力；
+- 不拆分 Payment 微服务，不引入 Redis/Kafka 来驱动订单超时或支付事件；这些演进必须等待后续阶段出现真实需求；
+- 不允许通过前端修改订单状态、伪造支付成功或绕过后端事务。
+
+---
+
 ## Phase 3A：Redis 活动缓存
 
 ### 阶段目标
@@ -761,17 +853,18 @@ web/
 3. `feat: add react demo frontend`：Phase 1B 前端页面与受控演示角色注册；
 4. `test: reproduce inventory overselling`：Phase 2 基线；
 5. `feat: enforce atomic inventory deduction`：数据库并发方案；
-6. `perf: add activity cache and cache protections`：Phase 3A；
-7. `feat: reserve seckill inventory with redis lua`：Phase 3B；
-8. `feat: add distributed rate limiting and nginx`：Phase 3C；
-9. `feat: create orders asynchronously with kafka`：Phase 3D；
-10. `feat: add reliable events and reconciliation`：Phase 4 一致性；
-11. `feat: extract inventory grpc service`：Phase 4 RPC；
-12. `refactor: split monolith into services`：Phase 5；
-13. `feat: add observability and resilience`：Phase 5 治理；
-14. `ci: add build test and image pipeline`：Phase 6；
-15. `deploy: add kubernetes manifests`：Phase 7；
-16. `test: add chaos scenarios and runbooks`：Phase 8。
+6. `feat: add order payment and expiration lifecycle`：Phase 2B 订单状态机；
+7. `perf: add activity cache and cache protections`：Phase 3A；
+8. `feat: reserve seckill inventory with redis lua`：Phase 3B；
+9. `feat: add distributed rate limiting and nginx`：Phase 3C；
+10. `feat: create orders asynchronously with kafka`：Phase 3D；
+11. `feat: add reliable events and reconciliation`：Phase 4 一致性；
+12. `feat: extract inventory grpc service`：Phase 4 RPC；
+13. `refactor: split monolith into services`：Phase 5；
+14. `feat: add observability and resilience`：Phase 5 治理；
+15. `ci: add build test and image pipeline`：Phase 6；
+16. `deploy: add kubernetes manifests`：Phase 7；
+17. `test: add chaos scenarios and runbooks`：Phase 8。
 
 ## 5. 每周执行节奏
 
@@ -799,4 +892,4 @@ web/
 
 ## 7. 明确延期项
 
-以下内容只有在前述阶段出现真实需求时才加入：Bloom Filter、Redis Cluster、Redlock、CDC、完整配置中心、Payment 服务、Service Mesh、CQRS、Event Sourcing、多地域容灾。它们可以写研究笔记，但不能阻塞主线，也不能仅为丰富技术栈进入生产代码。
+以下内容只有在前述阶段出现真实需求时才加入：Bloom Filter、Redis Cluster、Redlock、CDC、完整配置中心、真实第三方支付接入与独立 Payment 服务、Service Mesh、CQRS、Event Sourcing、多地域容灾。Phase 2B 只实现不处理真实资金的演示支付确认和订单超时状态机。延期内容可以写研究笔记，但不能阻塞主线，也不能仅为丰富技术栈进入生产代码。

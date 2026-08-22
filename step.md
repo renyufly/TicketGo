@@ -2,9 +2,9 @@
 
 ## 当前 Phase
 
-- 当前阶段：**Phase 1——PostgreSQL 单体 MVP**。
-- 当前状态：**已完成，Phase 1 阶段门禁已通过**。
-- 下一阶段：Phase 2——单机并发、数据库锁与 PostgreSQL 实验；尚未开始。
+- 当前阶段：**Phase 1B——React 前端演示页面**。
+- 当前状态：**已完成，Phase 1B 阶段门禁已通过**。
+- 下一阶段：Phase 2——单机并发、数据库锁与 PostgreSQL 实验；尚未开始，Phase 1 的朴素并发缺陷仍保留。
 
 ## 运行项目所需指令
 
@@ -31,6 +31,7 @@ if (-not (Test-Path .env)) {
 ```dotenv
 JWT_SECRET=replace-with-your-own-random-secret-at-least-32-characters
 AUTH_TOKEN_TTL=24h
+ALLOW_ADMIN_SELF_REGISTRATION=false
 ```
 
 如果本机 5432 已被其他 PostgreSQL 占用，在 `.env` 中同步修改映射端口与连接地址：
@@ -86,7 +87,27 @@ curl.exe -i http://localhost:8080/health/ready
 
 两个接口在 PostgreSQL 正常时都应返回 HTTP 200；ready 响应还应显示 PostgreSQL 状态为 `ok`。
 
-### 4. 跑通 Phase 1 业务闭环
+### 4. 启动 Phase 1B React 演示页面
+
+另开终端执行；依赖与缓存只写入项目目录：
+
+```powershell
+Set-Location D:\Code\TicketGo
+make web-install
+make web-dev
+```
+
+打开 `http://localhost:5173`。Vite 会把 `/api` 和 `/health` 代理到 Gin 8080。
+
+仅需演示匿名 admin 注册时，在根 `.env` 设置 `ALLOW_ADMIN_SELF_REGISTRATION=true`，并创建 `web/.env.local`：
+
+```dotenv
+VITE_ALLOW_ADMIN_REGISTRATION=true
+```
+
+两个开关必须同时开启并重启前后端。前端开关只控制显示，后端开关才决定是否允许创建 admin；生产环境禁止开启。随后可完全通过页面执行 admin 建商品/活动 → 退出切换 customer → 秒杀 → 查单 → 取消 → 查看库存回补 → 查看系统状态的闭环。
+
+### 5. 跑通 Phase 1 API 命令行闭环（可选）
 
 以下指令在另一个 PowerShell 终端执行。先注册管理员账号，再通过仅限本地开发的数据库命令提升角色；提升后必须重新登录，因为旧 JWT 中的角色不会作为最终授权依据，但重新登录便于验证完整流程。
 
@@ -149,7 +170,7 @@ Invoke-RestMethod -Method Post -Uri "$base/orders/$($order.data.id)/cancel" -Hea
 
 若重复执行上述示例，注册接口会因邮箱唯一约束返回 409。可更换邮箱，或只在确认不需要这些本地演示数据时手动清理。
 
-### 5. 运行质量、集成与 E2E 测试
+### 6. 运行质量、集成与 E2E 测试
 
 ```powershell
 # 格式化、vet、普通测试和构建
@@ -159,11 +180,14 @@ make check
 $env:TEST_DATABASE_URL = "postgres://ticketgo:ticketgo_local_password@localhost:55432/ticketgo?sslmode=disable"
 make test
 Remove-Item Env:TEST_DATABASE_URL
+
+# Gin 以 admin 本地演示开关启动时，运行真实前后端 API 演示闭环
+make web-e2e
 ```
 
 未设置 `TEST_DATABASE_URL` 时，涉及真实数据库的测试会安全跳过；Phase 1 门禁验证必须显式设置该变量并确认测试全部通过。
 
-### 6. 停止项目
+### 7. 停止项目
 
 先在运行服务的终端按 `Ctrl+C` 停止 Go 服务，再执行：
 
@@ -217,19 +241,19 @@ make migrate-up
 
 ### 验证结果
 
-| 检查项 | 结果 | 说明 |
-| --- | --- | --- |
-| `make check` | 通过 | 已依次完成 format、`go vet ./...`、`go test ./...`、build |
-| 单元/路由测试 | 通过 | 覆盖配置校验、request ID、readiness 依赖失败以及 live/ready 语义分离 |
-| `docker compose config` | 通过 | Compose 配置可解析；Docker 用户配置文件有权限警告，但不影响配置解析 |
-| golang-migrate CLI | 通过 | 首次发现 `go run` 未编入 PostgreSQL driver；Makefile 增加 `-tags postgres` 后验证通过 |
-| PostgreSQL 启动失败行为 | 通过 | 账号认证失败时，服务在连接超时内退出并输出结构化错误 |
-| Compose PostgreSQL | 通过 | `postgres:17.6-alpine` 在宿主机 55432 启动并达到 healthy |
-| 空库 up/down/up | 通过 | 三步均成功；最终 `schema_migrations` 为 `version=1, dirty=false` |
-| live/ready 实际 HTTP | 通过 | 正常时 live=200、ready=200；统一 JSON 和请求 ID 正确 |
-| PostgreSQL 故障与恢复 | 通过 | 容器停止时 live=200、ready=503；恢复后 ready=200 |
-| SIGTERM 实际进程验证 | 通过 | Linux 服务容器收到 Docker SIGTERM 后约 436ms 干净退出，exit code=0、OOM=false |
-| Docker image build | 通过 | 多阶段 Dockerfile 成功构建 `ticketgo:phase0` |
+| 检查项                  | 结果 | 说明                                                                                  |
+| ----------------------- | ---- | ------------------------------------------------------------------------------------- |
+| `make check`            | 通过 | 已依次完成 format、`go vet ./...`、`go test ./...`、build                             |
+| 单元/路由测试           | 通过 | 覆盖配置校验、request ID、readiness 依赖失败以及 live/ready 语义分离                  |
+| `docker compose config` | 通过 | Compose 配置可解析；Docker 用户配置文件有权限警告，但不影响配置解析                   |
+| golang-migrate CLI      | 通过 | 首次发现 `go run` 未编入 PostgreSQL driver；Makefile 增加 `-tags postgres` 后验证通过 |
+| PostgreSQL 启动失败行为 | 通过 | 账号认证失败时，服务在连接超时内退出并输出结构化错误                                  |
+| Compose PostgreSQL      | 通过 | `postgres:17.6-alpine` 在宿主机 55432 启动并达到 healthy                              |
+| 空库 up/down/up         | 通过 | 三步均成功；最终 `schema_migrations` 为 `version=1, dirty=false`                      |
+| live/ready 实际 HTTP    | 通过 | 正常时 live=200、ready=200；统一 JSON 和请求 ID 正确                                  |
+| PostgreSQL 故障与恢复   | 通过 | 容器停止时 live=200、ready=503；恢复后 ready=200                                      |
+| SIGTERM 实际进程验证    | 通过 | Linux 服务容器收到 Docker SIGTERM 后约 436ms 干净退出，exit code=0、OOM=false         |
+| Docker image build      | 通过 | 多阶段 Dockerfile 成功构建 `ticketgo:phase0`                                          |
 
 ### 当前进度与后续动作
 
@@ -270,23 +294,248 @@ Phase 0 的实现与阶段门禁现已全部完成，可以进入 Phase 1，但�
 
 ### 测试与故障实验
 
-| 检查项 | 结果 | 说明 |
-| --- | --- | --- |
-| 单元测试 | 通过 | 覆盖 JWT 过期、配置密钥、商品价格、活动时间、非法数量、重复用户、未开始/已结束/非 active、库存不足 |
-| PostgreSQL 集成测试 | 通过 | 覆盖提交、取消回补、唯一约束、FK/CHECK 防线与事务回滚 |
-| 库存后注入错误 | 通过 | `total=2, available=2, sold=0`，订单数 0 |
-| 订单 CHECK 约束失败 | 通过 | quantity=0 被数据库拒绝，此前库存更新完整回滚 |
-| 重复用户 | 通过 | 返回 409，唯一秒杀记录阻止重复，库存修改回滚 |
-| HTTP E2E | 通过 | 完整注册到取消闭环，覆盖 400/401/403/404/409/500 映射 |
-| migration | 通过 | 主项目应用到 version=2；另用无持久卷临时 PostgreSQL 完成空库 up → down → up，随后删除临时容器 |
-| PostgreSQL 停机/恢复 | 通过 | 停机前 ready=200；停机中 live=200、ready=503；恢复 healthy 后 ready=200，无需重启应用 |
-| `make format` | 通过 | Go 源码格式化完成 |
-| `go vet ./...` | 通过 | 无 vet 问题 |
-| `go test ./...` | 通过 | 设置 TEST_DATABASE_URL 后真实单元、集成、E2E 全部通过 |
-| `go build` | 通过 | 生成 `bin/ticketgo.exe` |
+| 检查项               | 结果 | 说明                                                                                               |
+| -------------------- | ---- | -------------------------------------------------------------------------------------------------- |
+| 单元测试             | 通过 | 覆盖 JWT 过期、配置密钥、商品价格、活动时间、非法数量、重复用户、未开始/已结束/非 active、库存不足 |
+| PostgreSQL 集成测试  | 通过 | 覆盖提交、取消回补、唯一约束、FK/CHECK 防线与事务回滚                                              |
+| 库存后注入错误       | 通过 | `total=2, available=2, sold=0`，订单数 0                                                           |
+| 订单 CHECK 约束失败  | 通过 | quantity=0 被数据库拒绝，此前库存更新完整回滚                                                      |
+| 重复用户             | 通过 | 返回 409，唯一秒杀记录阻止重复，库存修改回滚                                                       |
+| HTTP E2E             | 通过 | 完整注册到取消闭环，覆盖 400/401/403/404/409/500 映射                                              |
+| migration            | 通过 | 主项目应用到 version=2；另用无持久卷临时 PostgreSQL 完成空库 up → down → up，随后删除临时容器      |
+| PostgreSQL 停机/恢复 | 通过 | 停机前 ready=200；停机中 live=200、ready=503；恢复 healthy 后 ready=200，无需重启应用              |
+| `make format`        | 通过 | Go 源码格式化完成                                                                                  |
+| `go vet ./...`       | 通过 | 无 vet 问题                                                                                        |
+| `go test ./...`      | 通过 | 设置 TEST_DATABASE_URL 后真实单元、集成、E2E 全部通过                                              |
+| `go build`           | 通过 | 生成 `bin/ticketgo.exe`                                                                            |
 
 ### 当前进度与 Phase 2 边界
 
 Phase 1 的串行业务闭环、事务原子性、错误映射、request_id 日志关联、真实数据库集成测试与故障实验均已完成。PostgreSQL 容器已恢复 healthy，8080 上的临时验收服务已停止。
 
 当前实现不能声称高并发下不超卖：两个事务可能读取同一库存旧值并绝对值回写，造成 lost update。下一步应严格进入 Phase 2，先用固定 k6 场景稳定复现，再比较 `SELECT FOR UPDATE`、条件原子 UPDATE 和 version CAS；在完成实测决策前不加入 Redis。
+
+## 2026-08-22：Phase 1B React 前端演示页面
+
+### 执行依据与范围
+
+- 严格执行 `plan.md` 的 Phase 1B，并参考 `Idea.md` 的抢票领域模型、初始 API、单体事务边界和渐进演进原则。
+- 本阶段只增加 React 演示能力与受控 admin 本地注册开关，不改变库存、一人一单、权限和订单状态机的后端最终裁决地位。
+- 未加入 Redis、Kafka、Next.js、SSR、BFF、微服务或 Phase 2 并发修复；Phase 1 的朴素 read-modify-write 缺陷继续保留。
+
+### 环境与依赖处理过程
+
+1. 盘点发现系统已有 Node.js 24.11.1 和 npm 11.6.2，因此没有安装或升级任何全局 Node/npm/Go 工具。
+2. 前端依赖安装到 `web/node_modules`，npm 缓存固定为项目 `.cache/npm`；Node/npm 版本锁定到 `web/.node-version`、`package.json`、CI 和 `web/Dockerfile`。
+3. 查询并锁定 React 19.2.8、Vite 8.2.2、TypeScript 5.9.3 等精确依赖；初次选择 TypeScript 7.0.2 时发现与 typescript-eslint peer range 不兼容，改为受支持的 5.9.3，没有使用 `--force` 或忽略依赖约束。
+4. jsdom 30 要求 Node 24.15.0，而项目锁定 Node 24.11.1；因此选择兼容当前 Node 的 jsdom 29.1.1，消除 engine 警告。
+5. 新增 `web/go.mod` 作为 module 边界，避免根 Go 命令误扫描 `node_modules` 内第三方示例 Go 包。
+
+### 运行项目所需指令
+
+以下命令均在 Windows PowerShell 中执行，不会修改全局 Go、Node 或 npm 版本。
+
+#### 1. 准备项目内环境与配置
+
+```powershell
+Set-Location D:\Code\TicketGo
+
+# 仅当项目内便携 Go 不存在时执行；只写入 .tools/go 和 .cache
+if (-not (Test-Path .tools\go\bin\go.exe)) {
+    make bootstrap-go
+}
+
+# 不覆盖已经存在的本地环境配置
+if (-not (Test-Path .env)) {
+    Copy-Item .env.example .env
+}
+
+# 使用 package-lock.json 安装到 web/node_modules，npm 缓存写入 .cache/npm
+make web-install
+```
+
+打开根目录 `.env`，至少确认 JWT 密钥和数据库端口正确。当前本机 PostgreSQL 映射使用 55432：
+
+```dotenv
+JWT_SECRET=replace-with-your-own-random-secret-at-least-32-characters
+POSTGRES_PORT=55432
+DATABASE_URL=postgres://ticketgo:ticketgo_local_password@localhost:55432/ticketgo?sslmode=disable
+ALLOW_ADMIN_SELF_REGISTRATION=false
+```
+
+若需要在页面直接注册 admin 进行完整本地演示，把根 `.env` 的后端开关改为：
+
+```dotenv
+ALLOW_ADMIN_SELF_REGISTRATION=true
+```
+
+并创建 `web/.env.local`；若文件已经存在则不要覆盖，直接确认其中的值：
+
+```powershell
+if (-not (Test-Path web\.env.local)) {
+    Set-Content -Path web\.env.local -Value 'VITE_ALLOW_ADMIN_REGISTRATION=true'
+}
+```
+
+这两个 admin 开关只允许在本地演示环境同时开启；生产环境必须保持关闭。前端开关只控制选项显示，Gin 后端仍执行最终权限校验。
+
+#### 2. 启动 PostgreSQL 并应用 migration
+
+```powershell
+Set-Location D:\Code\TicketGo
+make compose-up
+make migrate-up
+docker compose ps
+```
+
+预期 `ticketgo-postgres-1` 状态为 `healthy`，migration 版本为 2。
+
+#### 3. 启动 Gin 后端
+
+在第一个 PowerShell 终端执行并保持运行：
+
+```powershell
+Set-Location D:\Code\TicketGo
+make run
+```
+
+后端默认地址为 `http://localhost:8080`。可在另一个终端检查：
+
+```powershell
+curl.exe -i http://localhost:8080/health/live
+curl.exe -i http://localhost:8080/health/ready
+```
+
+#### 4. 启动 React 前端
+
+在第二个 PowerShell 终端执行并保持运行：
+
+```powershell
+Set-Location D:\Code\TicketGo
+make web-dev
+```
+
+浏览器打开 `http://localhost:5173`。Vite 会把 `/api` 和 `/health` 代理到 Gin 8080，无需为本地双端口演示开启后端 CORS。
+
+页面完整演示顺序：
+
+```text
+注册并登录 admin
+→ 创建商品
+→ 创建 active 活动与库存
+→ 退出并切换 customer
+→ 浏览活动并秒杀
+→ 查看订单
+→ 取消订单
+→ 返回活动详情确认库存回补
+→ 打开系统状态页确认 live/ready/PostgreSQL 均为 ok
+```
+
+#### 5. 运行质量与真实 E2E 门禁
+
+```powershell
+Set-Location D:\Code\TicketGo
+
+# Go 与 React 的格式、lint、单测、类型检查和生产构建
+make check
+
+# 连接真实 PostgreSQL 的 Go integration/E2E
+$env:TEST_DATABASE_URL = "postgres://ticketgo:ticketgo_local_password@localhost:55432/ticketgo?sslmode=disable"
+make test
+Remove-Item Env:TEST_DATABASE_URL
+
+# Gin 已启动且允许本地 admin 注册时，验证真实 API 演示闭环
+make web-e2e
+```
+
+#### 6. 停止项目
+
+分别在 Gin 和 Vite 终端按 `Ctrl+C`，确认 8080 与 5173 已释放。随后停止 Compose 服务：
+
+```powershell
+Set-Location D:\Code\TicketGo
+make compose-down
+```
+
+`make compose-down` 会保留 PostgreSQL 具名数据卷。不要为了停止服务执行 `make migrate-down`；该命令会删除业务表及其中数据。
+
+### 实现过程
+
+1. 建立 React + Vite + TypeScript strict 工程，接入 React Router、TanStack Query、React Hook Form、Zod、Vitest、Testing Library、ESLint 和 Prettier。
+2. 统一 API Client 自动附加 Bearer Token，解包成功 envelope，保留稳定错误码和 request_id；网络、401、403、503、售罄、冲突和活动不可用均有用户可读反馈。
+3. 完成注册、登录、身份恢复、当前用户、退出/安全账号切换；Token 仅保存在 sessionStorage，只记忆最近邮箱，不保存密码或多个 JWT。
+4. 完成商品列表/详情/创建、活动列表/详情/创建与库存、秒杀、订单分页/详情/取消，以及 live/ready 系统状态页面，覆盖 Phase 1 的全部 API。
+5. 金额全程使用整数 cents，仅展示时格式化；本地 datetime 输入转换为 RFC3339/UTC；秒杀与取消后主动失效订单和活动查询，不做本地乐观库存。
+6. 后端注册 DTO 增加 customer/admin 枚举和缺省 customer；新增默认 false 的 `ALLOW_ADMIN_SELF_REGISTRATION`，关闭时 admin 请求稳定返回 403，前端显示开关不能替代后端校验。
+7. 增加前端静态 Nginx 镜像、项目内 Make 命令、GitHub Actions 前端门禁、真实 Gin/PostgreSQL 演示脚本，并更新 README 和阶段文档。
+
+### 验证结果
+
+| 检查项                       | 结果 | 说明                                                                               |
+| ---------------------------- | ---- | ---------------------------------------------------------------------------------- |
+| 前端 format/ESLint/typecheck | 通过 | Prettier、ESLint、TypeScript strict 均无问题                                       |
+| Vitest                       | 通过 | 2 个测试文件、3 个测试，覆盖 envelope、稳定错误与 request_id 展示                  |
+| production build             | 通过 | Vite 转换 177 个模块，生成纯静态 dist                                              |
+| Go vet/build                 | 通过 | 后端原有质量门禁继续通过                                                           |
+| Go unit/integration/E2E      | 通过 | 连接真实 PostgreSQL，覆盖普通注册、admin 开关开/关、非法 role、事务与完整 API 闭环 |
+| 真实 API 演示脚本            | 通过 | admin/customer 注册登录、商品、活动、秒杀、查单、取消和库存回补完整通过            |
+| 真实浏览器页面闭环           | 通过 | admin 创建商品/活动，切换 customer 秒杀与取消；库存从 1/2 回补到 2/2               |
+| 系统状态页面                 | 通过 | live=ok、ready=ok、PostgreSQL=ok，5 秒自动刷新                                     |
+| 浏览器运行时日志             | 通过 | 控制台无 error/warn，普通用户导航不显示管理入口                                    |
+| 前端 Docker build            | 通过 | 成功构建 `ticketgo-web:phase1b`，Node 与 Nginx 镜像精确锁定                        |
+
+### 当前进度与下一阶段边界
+
+Phase 1B 的源码、lockfile、项目内环境、页面闭环、后端安全开关、测试、CI、Docker 和文档均已完成，阶段门禁通过。验收期间创建了少量 `example.test` 本地演示账号、商品、活动和已取消订单；它们只存在于项目 PostgreSQL 数据卷，不包含真实个人信息。
+
+本轮没有修改全局 Go/Node/npm 版本。PostgreSQL 容器保持 healthy；最终交付时临时 Gin/Vite 验收服务已停止，避免占用 8080/5173。下一步仍应按计划进入 Phase 2，用 k6 稳定复现 lost update/超卖，再比较 PostgreSQL 锁与原子更新方案，不能把前端按钮禁用误认为并发正确性修复。
+
+### 前端页面解释
+
+商品/ -> 资源目录 ：商品 / 门票
+
+先创建一个基础商品：
+商品名称：XXX 2026 巴黎演唱会门票
+描述：巴黎站内场门票
+基础价格：¥1,280
+状态：active
+
+> 它只说明“卖的是什么”，此时还没有销售时间和库存，所以用户不能秒杀
+
+活动/ -> 实时库存：秒杀活动
+
+管理员再基于这个商品创建一个活动：
+活动名称：巴黎站首轮限量抢票
+关联商品：XXX 2026 巴黎演唱会门票
+活动价格：¥980
+开始时间：2026-08-23 20:00
+结束时间：2026-08-23 20:10
+总库存：100 张
+可用库存：100 张
+已售：0 张
+状态：active
+
+> 这个活动说明“什么时候卖、卖多少钱、有多少库存”
+
+用户操作
+
+活动开始后，普通用户进入“秒杀活动”详情页：
+购买数量：1
+→ 点击“立即秒杀”
+→ 可用库存变为 99
+→ 已售变为 1
+→ 生成 ¥980 的 pending 订单 (订单已创建，但还没有完成支付)
+（位于 订单/）
+
+如果用户取消订单：
+订单状态：pending → cancelled
+可用库存：99 → 100
+已售数量：1 → 0
+
+同一个商品还可以创建多个活动：
+XXX 2026 巴黎演唱会门票
+├── 早鸟抢票：¥880，库存 50
+├── 首轮抢票：¥980，库存 100
+└── 最终补票：¥1,180，库存 20
+
+> 因此，“商品 / 门票”相当于商品档案；“秒杀活动”才是用户实际参加和下单的销售场次

@@ -15,6 +15,7 @@ type User struct {
 type CreateInput struct {
 	Email    string `json:"email" binding:"required,email,max=320"`
 	Password string `json:"password" binding:"required,min=8,max=72"`
+	Role     string `json:"role" binding:"omitempty,oneof=customer admin"`
 }
 type LoginInput struct {
 	Email    string `json:"email" binding:"required,email,max=320"`
