@@ -13,20 +13,31 @@ import (
 )
 
 type Service struct {
-	repo   Repository
-	tokens *auth.Manager
+	repo                       Repository
+	tokens                     *auth.Manager
+	allowAdminSelfRegistration bool
 }
 
-func NewService(repo Repository, tokens *auth.Manager) *Service {
-	return &Service{repo: repo, tokens: tokens}
+func NewService(repo Repository, tokens *auth.Manager, allowAdminSelfRegistration bool) *Service {
+	return &Service{repo: repo, tokens: tokens, allowAdminSelfRegistration: allowAdminSelfRegistration}
 }
 func (s *Service) Create(ctx context.Context, in CreateInput) (User, error) {
 	email := strings.ToLower(strings.TrimSpace(in.Email))
+	role := strings.ToLower(strings.TrimSpace(in.Role))
+	if role == "" {
+		role = "customer"
+	}
+	if role != "customer" && role != "admin" {
+		return User{}, domain.New(domain.ErrInvalid, "role must be customer or admin", nil)
+	}
+	if role == "admin" && !s.allowAdminSelfRegistration {
+		return User{}, domain.New(domain.ErrForbidden, "admin self-registration is disabled", nil)
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return User{}, err
 	}
-	u, err := s.repo.Create(ctx, email, string(hash))
+	u, err := s.repo.Create(ctx, email, string(hash), role)
 	if isUnique(err) {
 		return User{}, domain.New(domain.ErrConflict, "email is already registered", err)
 	}

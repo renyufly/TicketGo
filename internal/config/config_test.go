@@ -15,6 +15,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Database.MaxOpenConns != 25 {
 		t.Fatalf("MaxOpenConns = %d", cfg.Database.MaxOpenConns)
 	}
+	if cfg.Auth.AllowAdminSelfRegistration {
+		t.Fatal("AllowAdminSelfRegistration = true, want secure default false")
+	}
 }
 
 func TestLoadRejectsInvalidDuration(t *testing.T) {
@@ -38,5 +41,23 @@ func TestLoadRejectsWeakJWTSecret(t *testing.T) {
 	t.Setenv("JWT_SECRET", "short")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() error = nil, want JWT secret validation error")
+	}
+}
+
+func TestLoadAdminSelfRegistrationFlag(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("ALLOW_ADMIN_SELF_REGISTRATION", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Auth.AllowAdminSelfRegistration {
+		t.Fatal("AllowAdminSelfRegistration = false, want true")
+	}
+
+	t.Setenv("ALLOW_ADMIN_SELF_REGISTRATION", "sometimes")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want boolean validation error")
 	}
 }

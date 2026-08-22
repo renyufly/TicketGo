@@ -8,7 +8,7 @@ import (
 )
 
 type Repository interface {
-	Create(context.Context, string, string) (User, error)
+	Create(context.Context, string, string, string) (User, error)
 	ByEmail(context.Context, string) (User, error)
 	ByID(context.Context, int64) (User, error)
 }
@@ -23,8 +23,8 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Status, &u.CreatedAt, &u.UpdatedAt)
 	return u, err
 }
-func (r *SQLRepository) Create(ctx context.Context, email, hash string) (User, error) {
-	u, err := scanUser(r.db.QueryRowContext(ctx, `INSERT INTO users(email,password_hash) VALUES($1,$2) RETURNING `+userColumns, email, hash))
+func (r *SQLRepository) Create(ctx context.Context, email, hash, role string) (User, error) {
+	u, err := scanUser(r.db.QueryRowContext(ctx, `INSERT INTO users(email,password_hash,role) VALUES($1,$2,$3) RETURNING `+userColumns, email, hash, role))
 	if err != nil {
 		return User{}, fmt.Errorf("create user: %w", err)
 	}
