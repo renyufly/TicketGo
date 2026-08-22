@@ -14,6 +14,12 @@ type Config struct {
 	Environment string
 	HTTP        HTTPConfig
 	Database    database.Config
+	Auth        AuthConfig
+}
+
+type AuthConfig struct {
+	JWTSecret string
+	TokenTTL  time.Duration
 }
 
 type HTTPConfig struct {
@@ -35,6 +41,7 @@ func Load() (Config, error) {
 		Database: database.Config{
 			URL: env("DATABASE_URL", "postgres://ticketgo:ticketgo_local_password@localhost:5432/ticketgo?sslmode=disable"),
 		},
+		Auth: AuthConfig{JWTSecret: env("JWT_SECRET", "")},
 	}
 
 	var err error
@@ -74,12 +81,18 @@ func Load() (Config, error) {
 	if cfg.Database.QueryTimeout, err = duration("DB_QUERY_TIMEOUT", "3s"); err != nil {
 		return Config{}, err
 	}
+	if cfg.Auth.TokenTTL, err = duration("AUTH_TOKEN_TTL", "24h"); err != nil {
+		return Config{}, err
+	}
 
 	if cfg.Database.URL == "" {
 		return Config{}, errors.New("DATABASE_URL must not be empty")
 	}
 	if cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns {
 		return Config{}, errors.New("DB_MAX_IDLE_CONNS must not exceed DB_MAX_OPEN_CONNS")
+	}
+	if len(cfg.Auth.JWTSecret) < 32 {
+		return Config{}, errors.New("JWT_SECRET must contain at least 32 characters")
 	}
 	return cfg, nil
 }

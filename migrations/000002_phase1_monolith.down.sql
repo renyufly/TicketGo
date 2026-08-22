@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS seckill_records;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS inventories;
+DROP TABLE IF EXISTS activities;
+DROP TABLE IF EXISTS items;
+DROP TABLE IF EXISTS users;

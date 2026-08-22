@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,15 +10,19 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"ticketgo/internal/config"
+	"ticketgo/pkg/database"
 )
 
 type databaseStub struct{ pingErr error }
 
 func (d databaseStub) PingContext(context.Context) error { return d.pingErr }
 func (d databaseStub) QueryTimeout() time.Duration       { return time.Second }
+func (d databaseStub) SQL() *sql.DB                      { return nil }
 
 func TestHealthEndpointsHaveSeparateSemantics(t *testing.T) {
-	router := NewRouter(databaseStub{pingErr: errors.New("database unavailable")}, time.Second, zap.NewNop())
+	cfg := config.Config{HTTP: config.HTTPConfig{RequestTimeout: time.Second}, Auth: config.AuthConfig{JWTSecret: "0123456789abcdef0123456789abcdef", TokenTTL: time.Hour}, Database: database.Config{}}
+	router := NewRouter(databaseStub{pingErr: errors.New("database unavailable")}, cfg, zap.NewNop())
 
 	live := httptest.NewRecorder()
 	router.ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/health/live", nil))
