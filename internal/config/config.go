@@ -18,8 +18,9 @@ type Config struct {
 }
 
 type AuthConfig struct {
-	JWTSecret string
-	TokenTTL  time.Duration
+	JWTSecret                  string
+	TokenTTL                   time.Duration
+	AllowAdminSelfRegistration bool
 }
 
 type HTTPConfig struct {
@@ -84,6 +85,9 @@ func Load() (Config, error) {
 	if cfg.Auth.TokenTTL, err = duration("AUTH_TOKEN_TTL", "24h"); err != nil {
 		return Config{}, err
 	}
+	if cfg.Auth.AllowAdminSelfRegistration, err = boolean("ALLOW_ADMIN_SELF_REGISTRATION", false); err != nil {
+		return Config{}, err
+	}
 
 	if cfg.Database.URL == "" {
 		return Config{}, errors.New("DATABASE_URL must not be empty")
@@ -118,6 +122,15 @@ func integer(key string, fallback int) (int, error) {
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
 		return 0, fmt.Errorf("%s must be a positive integer, got %q", key, value)
+	}
+	return parsed, nil
+}
+
+func boolean(key string, fallback bool) (bool, error) {
+	value := env(key, strconv.FormatBool(fallback))
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean, got %q", key, value)
 	}
 	return parsed, nil
 }

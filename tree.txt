@@ -1,13 +1,14 @@
 TicketGo/
-├── .cache/                                         —— 存放项目内 Go 模块、编译、测试和 vet 缓存，不属于业务源码。
+├── .cache/                                         —— 存放项目内 Go/npm 模块、编译、测试和分析缓存，不属于业务源码。
 │   ├── go-build/                                   —— Go 常规构建与测试使用的项目级缓存目录（内部生成文件不逐项列出）。
 │   ├── go-build-build/                             —— Go build 命令使用的独立项目级构建缓存目录（内部生成文件不逐项列出）。
 │   ├── go-build-vet/                               —— Go vet 命令使用的独立项目级分析缓存目录（内部生成文件不逐项列出）。
-│   └── go-mod/                                     —— Go 依赖模块的项目级下载缓存目录（内部第三方文件不逐项列出）。
+│   ├── go-mod/                                     —— Go 依赖模块的项目级下载缓存目录（内部第三方文件不逐项列出）。
+│   └── npm/                                        —— npm 的项目级下载与元数据缓存目录（内部第三方文件不逐项列出）。
 ├── .git/                                           —— 保存 Git 版本库对象、索引和引用等内部元数据（内部生成文件不逐项列出）。
 ├── .github/                                        —— 保存 GitHub 平台相关配置。
 │   └── workflows/                                  —— 保存 GitHub Actions 工作流。
-│       └── ci.yml                                  —— 定义格式检查、vet、测试和构建的基础 CI 流程。
+│       └── ci.yml                                  —— 定义 Go 与 React 的格式、lint、测试和生产构建 CI 门禁。
 ├── .tools/                                         —— 存放不会影响系统全局环境的项目内工具链。
 │   └── go/                                         —— 存放项目锁定的便携版 Go 1.27.0 工具链（官方内部文件不逐项列出）。
 ├── bin/                                            —— 存放本地构建产物。
@@ -22,7 +23,8 @@ TicketGo/
 │   ├── api.md                                      —— 说明 Phase 1 API、权限、分页规则和调用示例。
 │   ├── database.md                                 —— 说明业务表字段、约束、索引、状态机和取消规则。
 │   ├── phase0-bootstrap.md                         —— 说明 Phase 0 工程骨架、启动链路和健康检查设计。
-│   └── phase1-monolith.md                          —— 总结 Phase 1 单体 MVP 的实现、测试、取舍和已知并发缺陷。
+│   ├── phase1-monolith.md                          —— 总结 Phase 1 单体 MVP 的实现、测试、取舍和已知并发缺陷。
+│   └── phase1b-frontend.md                         —— 说明 React 演示页面的环境、结构、安全边界、启动和验证结果。
 ├── internal/                                       —— 存放仅供本项目内部使用的应用业务代码。
 │   ├── activity/                                   —— 活动领域模块。
 │   │   ├── handler.go                              —— 处理活动创建、列表和详情 HTTP 请求。
@@ -95,7 +97,64 @@ TicketGo/
 │   └── bootstrap-go.ps1                            —— 下载、校验并解压项目内锁定的 Windows Go 工具链。
 ├── tests/                                          —— 存放跨模块测试。
 │   └── e2e/                                        —— 端到端测试目录。
-│       └── phase1_test.go                          —— 使用真实 PostgreSQL 和 HTTP Router 验证 Phase 1 完整业务闭环及错误映射。
+│       └── phase1_test.go                          —— 使用真实 PostgreSQL 验证 Phase 1 闭环及 Phase 1B admin 注册开关。
+├── web/                                            —— Phase 1B React + Vite + TypeScript 演示前端。
+│   ├── e2e/                                        —— 存放连接真实 Gin/PostgreSQL 的最小演示脚本。
+│   │   └── demo-flow.mjs                           —— 验证注册、商品、活动、秒杀、查单、取消和库存回补闭环。
+│   ├── src/                                        —— 前端 TypeScript/React 源码。
+│   │   ├── api/                                    —— API 契约、统一 Client、格式化和 API 单测。
+│   │   │   ├── client.test.ts                      —— 测试标准成功 envelope 和稳定错误/request_id。
+│   │   │   ├── client.ts                           —— 附加 JWT、解包响应并统一转换 API 错误。
+│   │   │   ├── format.ts                           —— 格式化 cents 金额、RFC3339 时间和本地时区。
+│   │   │   └── types.ts                            —— 定义 User、Item、Activity、Order 和健康状态类型。
+│   │   ├── auth/                                   —— 登录 Token、当前用户和身份恢复状态。
+│   │   │   └── AuthContext.tsx                     —— 管理 session JWT、最近邮箱、登录、恢复和退出。
+│   │   ├── components/                             —— 页面共享的轻量 UI 组件。
+│   │   │   ├── Entity.tsx                          —— 页面标题、状态标签和详情字段组件。
+│   │   │   ├── Feedback.test.tsx                   —— 测试用户可读错误和 request_id 展示。
+│   │   │   ├── Feedback.tsx                        —— loading、empty、success 与错误追踪反馈。
+│   │   │   ├── Layout.tsx                          —— 登录后的导航、账号切换和页面框架。
+│   │   │   └── Pagination.tsx                      —— 提供固定 limit/offset 上下页交互。
+│   │   ├── features/                               —— 按业务领域组织的 API 调用。
+│   │   │   ├── activities/api.ts                   —— 活动列表/详情/创建和秒杀请求。
+│   │   │   ├── items/api.ts                        —— 商品列表/详情/创建请求。
+│   │   │   ├── orders/api.ts                       —— 订单列表/详情/取消请求。
+│   │   │   └── users/api.ts                        —— 注册、登录和当前用户请求。
+│   │   ├── pages/                                  —— 覆盖全部 Phase 1 API 的路由页面。
+│   │   │   ├── ActivitiesPage.tsx                  —— 活动分页列表与库存摘要页面。
+│   │   │   ├── ActivityDetailPage.tsx              —— 活动详情、库存和同步秒杀页面。
+│   │   │   ├── CreateActivityPage.tsx              —— admin 创建活动与库存表单。
+│   │   │   ├── CreateItemPage.tsx                  —— admin 创建商品表单。
+│   │   │   ├── ForbiddenPage.tsx                   —— 展示前端权限不足提示。
+│   │   │   ├── ItemDetailPage.tsx                  —— 商品详情页面。
+│   │   │   ├── ItemsPage.tsx                       —— 商品分页列表页面。
+│   │   │   ├── LoginPage.tsx                       —— 登录、最近邮箱回填和角色跳转页面。
+│   │   │   ├── NotFoundPage.tsx                    —— 未匹配路由页面。
+│   │   │   ├── OrderDetailPage.tsx                 —— 订单详情、取消和库存刷新页面。
+│   │   │   ├── OrdersPage.tsx                      —— 当前用户订单分页列表页面。
+│   │   │   ├── ProfilePage.tsx                     —— 当前用户 ID、邮箱、角色和状态页面。
+│   │   │   ├── RegisterPage.tsx                    —— customer/admin 受控注册页面。
+│   │   │   └── SystemStatusPage.tsx                —— 展示 live、ready 与 PostgreSQL 状态。
+│   │   ├── router/                                 —— React Router 与访问控制。
+│   │   │   ├── AppRouter.tsx                       —— 装配公开、登录、admin 与详情路由。
+│   │   │   └── ProtectedRoute.tsx                  —— 执行身份恢复和 admin 页面保护。
+│   │   ├── styles/global.css                       —— 全局设计变量、布局、状态和响应式样式。
+│   │   ├── test/setup.ts                           —— 初始化 Vitest DOM matcher 与测试清理。
+│   │   └── main.tsx                                —— 装配 Query、Router、Auth 与 React 根节点。
+│   ├── .dockerignore                               —— 排除前端依赖、构建产物和环境文件。
+│   ├── .env.example                                —— 提供前端 admin 选项显示开关示例。
+│   ├── .node-version                               —— 锁定项目 Node.js 24.11.1。
+│   ├── .npmrc                                      —— 固定项目 npm 缓存并关闭非必要联网提示。
+│   ├── .prettierignore                             —— 排除生成产物与 lockfile 的格式化。
+│   ├── Dockerfile                                  —— 用锁定 Node 构建并由 Nginx 提供静态页面。
+│   ├── eslint.config.js                            —— 配置 TypeScript、React Hooks 与 Vite lint。
+│   ├── go.mod                                      —— 隔离根 Go module 与 node_modules 第三方 Go 示例。
+│   ├── index.html                                  —— Vite SPA HTML 入口。
+│   ├── nginx.conf                                  —— 配置 SPA fallback 与 Gin API 反向代理。
+│   ├── package-lock.json                           —— 精确锁定完整 npm 依赖树。
+│   ├── package.json                                —— 声明 Node/npm、依赖与前端命令。
+│   ├── tsconfig.json                               —— 启用严格 TypeScript 和 Bundler 解析。
+│   └── vite.config.ts                              —— 配置 React、开发代理和 Vitest jsdom。
 ├── .dockerignore                                   —— 指定 Docker 构建上下文中需要排除的本地文件。
 ├── .env                                            —— 保存当前机器的本地开发环境变量和密钥，不提交版本库。
 ├── .env.example                                    —— 提供可复制的环境变量模板和安全配置说明。
@@ -106,10 +165,10 @@ TicketGo/
 ├── go.sum                                          —— 锁定并校验 Go 依赖模块内容。
 ├── Idea.md                                         —— 记录项目背景、学习路线和高并发抢票系统总体构想。
 ├── LICENSE                                         —— 声明项目的 MIT 开源许可证。
-├── Makefile                                        —— 提供环境、格式化、测试、构建、运行、Compose 和 migration 命令。
+├── Makefile                                        —— 提供 Go/React 环境、测试、构建、运行、Compose 和 migration 命令。
 ├── plan.md                                         —— 定义 TicketGo 从 Phase 0 到后续分布式阶段的严格执行计划。
-├── README.md                                       —— 提供项目简介、环境基线、启动方法和文档入口。
+├── README.md                                       —— 提供 Phase 1B 环境、前后端启动、开关、门禁和文档入口。
 ├── step.md                                         —— 持续记录各 Phase 的实现过程、验证结果、进度和运行指令。
 └── tree.txt                                        —— 展示当前项目文件结构并用中文说明每个文件的作用。
 
-说明：`.cache` 约 1.9 万个文件、`.tools/go` 约 1.5 万个文件，均为可再生成的缓存或官方工具链内容；`.git` 为版本控制内部数据，因此本清单按目录说明而不展开其中约 3.5 万个非项目源文件。
+说明：`.cache`、`.tools/go`、`web/node_modules` 和 `web/dist` 均为可再生成的缓存、工具链、第三方依赖或构建产物；`.git` 为版本控制内部数据，因此本清单按目录说明而不展开内部文件。

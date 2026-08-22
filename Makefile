@@ -30,10 +30,10 @@ endif
 MIGRATE := $(GO_ENV) $(GO_CMD) run -tags postgres github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.3
 DATABASE_URL ?= postgres://ticketgo:ticketgo_local_password@localhost:5432/ticketgo?sslmode=disable
 
-.PHONY: help bootstrap-go deps format lint test build run compose-up compose-down migrate-up migrate-down migrate-create check
+.PHONY: help bootstrap-go deps format lint test build run compose-up compose-down migrate-up migrate-down migrate-create web-install web-dev web-check web-e2e check
 
 help:
-	@echo "bootstrap-go | deps | format | lint | test | build | run | compose-up | compose-down | migrate-up | migrate-down | migrate-create NAME=name | check"
+	@echo "bootstrap-go | deps | format | lint | test | build | run | compose-up | compose-down | migrate-up | migrate-down | migrate-create NAME=name | web-install | web-dev | web-check | web-e2e | check"
 
 bootstrap-go:
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-go.ps1
@@ -73,4 +73,16 @@ migrate-create:
 	@$(CHECK_NAME)
 	$(MIGRATE) create -ext sql -dir migrations -seq "$(NAME)"
 
-check: format lint test build
+web-install:
+	cd web && npm ci
+
+web-dev:
+	cd web && npm run dev
+
+web-check:
+	cd web && npm run check
+
+web-e2e:
+	cd web && npm run test:e2e
+
+check: format lint test build web-check

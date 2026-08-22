@@ -4,7 +4,7 @@
 
 | 方法与路径 | 权限 | 说明 |
 | --- | --- | --- |
-| `POST /users` | 公开 | 注册普通用户 |
+| `POST /users` | 公开 | 注册 customer；仅本地开关允许 admin |
 | `POST /login` | 公开 | 获取 HS256 JWT |
 | `GET /users/me` | 登录 | 当前用户 |
 | `POST /items` | admin | 创建商品 |
@@ -17,13 +17,13 @@
 
 列表参数为 `limit`（默认 20，最大 100）与 `offset`（默认 0，最大 10000），排序固定为 `created_at DESC, id DESC`。
 
-本阶段没有对外开放创建管理员的入口。开发环境可在注册后明确执行 `UPDATE users SET role='admin' WHERE email='...'`，再重新登录获取含 admin 角色的新 token；生产环境应由受控运维流程配置。
+注册请求可传 `role: "customer" | "admin"`，缺省为 customer。admin 匿名注册受 `ALLOW_ADMIN_SELF_REGISTRATION` 控制且默认关闭；关闭时返回 HTTP 403 / `forbidden`，非法 role 返回 HTTP 400。该能力只用于 Phase 1B 本地演示，生产环境禁止开启，真实部署应由受控初始化、邀请或运维流程创建管理员。
 
 示例请求：
 
 ```powershell
 $base = "http://localhost:8080/api/v1"
-Invoke-RestMethod -Method Post -Uri "$base/users" -ContentType "application/json" -Body '{"email":"user@example.com","password":"password-123"}'
+Invoke-RestMethod -Method Post -Uri "$base/users" -ContentType "application/json" -Body '{"email":"user@example.com","password":"password-123","role":"customer"}'
 $login = Invoke-RestMethod -Method Post -Uri "$base/login" -ContentType "application/json" -Body '{"email":"user@example.com","password":"password-123"}'
 $headers = @{ Authorization = "Bearer $($login.data.access_token)" }
 Invoke-RestMethod -Method Get -Uri "$base/users/me" -Headers $headers

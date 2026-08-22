@@ -38,7 +38,7 @@ func NewRouter(db DatabaseHealth, cfg config.Config, logger *zap.Logger) http.Ha
 	router.GET("/health/ready", healthHandler.Ready)
 
 	tokens := auth.NewManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
-	userHandler := user.NewHandler(user.NewService(user.NewRepository(db.SQL()), tokens))
+	userHandler := user.NewHandler(user.NewService(user.NewRepository(db.SQL()), tokens, cfg.Auth.AllowAdminSelfRegistration))
 	itemHandler := item.NewHandler(item.NewService(item.NewRepository(db.SQL())))
 	activityHandler := activity.NewHandler(activity.NewService(activity.NewRepository(db.SQL())))
 	orderHandler := order.NewHandler(order.NewService(db.SQL(), order.NewRepository(db.SQL()), inventory.NewRepository()))

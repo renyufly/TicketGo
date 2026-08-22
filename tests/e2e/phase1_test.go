@@ -17,7 +17,7 @@ import (
 	"ticketgo/pkg/database"
 )
 
-func testRouter(t *testing.T) (http.Handler, *database.DB) {
+func testRouter(t *testing.T, allowAdminSelfRegistration bool) (http.Handler, *database.DB) {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -29,7 +29,7 @@ func testRouter(t *testing.T) (http.Handler, *database.DB) {
 		t.Skipf("PostgreSQL unavailable: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	cfg := config.Config{HTTP: config.HTTPConfig{RequestTimeout: 3 * time.Second}, Database: dbcfg, Auth: config.AuthConfig{JWTSecret: "0123456789abcdef0123456789abcdef", TokenTTL: time.Hour}}
+	cfg := config.Config{HTTP: config.HTTPConfig{RequestTimeout: 3 * time.Second}, Database: dbcfg, Auth: config.AuthConfig{JWTSecret: "0123456789abcdef0123456789abcdef", TokenTTL: time.Hour, AllowAdminSelfRegistration: allowAdminSelfRegistration}}
 	return httpapi.NewRouter(db, cfg, zap.NewNop()), db
 }
 func request(t *testing.T, router http.Handler, method, path, token string, body any) (int, map[string]any) {
@@ -58,7 +58,7 @@ func request(t *testing.T, router http.Handler, method, path, token string, body
 func data(body map[string]any) map[string]any { return body["data"].(map[string]any) }
 
 func TestPhase1BusinessLoopAndErrorMapping(t *testing.T) {
-	router, db := testRouter(t)
+	router, db := testRouter(t, false)
 	suffix := time.Now().UnixNano()
 	email := fmt.Sprintf("e2e-%d@example.test", suffix)
 	ctx := context.Background()
@@ -74,6 +74,12 @@ func TestPhase1BusinessLoopAndErrorMapping(t *testing.T) {
 
 	if status, _ := request(t, router, http.MethodGet, "/api/v1/orders", "", nil); status != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status=%d", status)
+	}
+	if status, _ := request(t, router, http.MethodPost, "/api/v1/users", "", map[string]any{"email": "forbidden-admin@example.test", "password": "password-123", "role": "admin"}); status != http.StatusForbidden {
+		t.Fatalf("disabled admin registration status=%d", status)
+	}
+	if status, _ := request(t, router, http.MethodPost, "/api/v1/users", "", map[string]any{"email": "invalid-role@example.test", "password": "password-123", "role": "owner"}); status != http.StatusBadRequest {
+		t.Fatalf("invalid role status=%d", status)
 	}
 	status, body := request(t, router, http.MethodPost, "/api/v1/users", "", map[string]any{"email": email, "password": "password-123"})
 	if status != http.StatusCreated {
@@ -133,12 +139,33 @@ func TestPhase1BusinessLoopAndErrorMapping(t *testing.T) {
 }
 
 func TestInternalDatabaseErrorMapsTo500(t *testing.T) {
-	router, db := testRouter(t)
+	router, db := testRouter(t, false)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	status, body := request(t, router, http.MethodPost, "/api/v1/users", "", map[string]any{"email": "closed-db@example.test", "password": "password-123"})
 	if status != http.StatusInternalServerError || body["code"] != "internal_error" {
 		t.Fatalf("status=%d body=%v", status, body)
+	}
+}
+
+func TestAdminSelfRegistrationEnabledForDemo(t *testing.T) {
+	router, db := testRouter(t, true)
+	email := fmt.Sprintf("demo-admin-%d@example.test", time.Now().UnixNano())
+	var userID int64
+	t.Cleanup(func() {
+		if userID != 0 {
+			_, _ = db.ExecContext(context.Background(), `DELETE FROM users WHERE id=$1`, userID)
+		}
+	})
+
+	status, body := request(t, router, http.MethodPost, "/api/v1/users", "", map[string]any{"email": email, "password": "password-123", "role": "admin"})
+	if status != http.StatusCreated {
+		t.Fatalf("admin registration status=%d body=%v", status, body)
+	}
+	created := data(body)
+	userID = int64(created["id"].(float64))
+	if created["role"] != "admin" {
+		t.Fatalf("role=%v, want admin", created["role"])
 	}
 }
