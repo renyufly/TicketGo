@@ -78,6 +78,7 @@ TicketGo/
 │   ├── inventory/
 │   └── order/
 ├── pkg/
+├── web/                    # Phase 1B 起加入 React 演示前端
 ├── configs/
 ├── migrations/
 ├── scripts/
@@ -100,6 +101,7 @@ Phase 5 目标结构：
 TicketGo/
 ├── services/{gateway,user,activity,inventory,order}/
 ├── api/proto/
+├── web/
 ├── pkg/
 ├── deployments/
 ├── scripts/
@@ -227,6 +229,152 @@ TicketGo/
 - 单元、集成、E2E 测试全部通过；
 - 能用日志中的 request_id 串起单个请求；
 - 明确承认并保留并发缺陷，禁止提前加 Redis/Kafka。
+
+---
+
+## Phase 1B：React 前端演示页面
+
+### 阶段定位与目标
+
+在 Phase 1 PostgreSQL 单体 MVP 已通过门禁后，使用 **React + Vite + TypeScript** 搭建轻量演示前端，把后端已经实现的注册、登录、用户信息、商品、活动、秒杀、订单查询和取消能力完整展示出来。
+
+本阶段只改善项目的可操作性和演示效果，不改变项目以 Go、PostgreSQL、事务、并发和分布式演进为核心的定位。前端不得承担权限、库存、价格、活动状态、一人一单或订单状态机等最终业务判断；页面上的禁用按钮、倒计时和库存展示只用于用户体验，后端 API 与数据库约束仍是唯一正确性来源。
+
+### 技术基线
+
+- 框架：React + TypeScript；构建工具：Vite；不引入 Next.js、SSR、Server Components、Server Actions 或额外 Node 服务端；
+- 路由：React Router；服务端状态与请求缓存：TanStack Query；表单：React Hook Form；数据校验：Zod；
+- HTTP 层封装统一 API Client，自动附加 Bearer Token、解析 `data/request_id` 成功结构和 `code/message/request_id` 错误结构；
+- 测试使用 Vitest + React Testing Library；只为核心交互补最小测试，不追求复杂视觉测试体系；
+- Node.js、包管理器缓存和依赖优先放在项目目录内或通过容器使用，不要求修改开发者机器的全局 Node 版本；具体版本在实施时锁定到 `package.json`、lockfile、CI 和 Dockerfile；
+- 开发环境由 Vite 把 `/api` 代理到 Gin `http://localhost:8080`，避免为本地双端口演示扩大后端 CORS；部署时生成纯静态资源，可由 Nginx 或 Go 静态文件服务提供。
+
+### 前端目录规划
+
+```text
+web/
+├── src/
+│   ├── api/               # API Client、类型和统一错误转换
+│   ├── auth/              # Token、当前用户和路由权限状态
+│   ├── components/        # 页面间复用的轻量 UI 组件
+│   ├── features/
+│   │   ├── users/         # 注册、登录和当前用户
+│   │   ├── items/         # 商品创建、列表和详情
+│   │   ├── activities/    # 活动创建、列表、详情和秒杀入口
+│   │   └── orders/        # 订单列表、详情和取消
+│   ├── pages/             # 路由页面
+│   ├── router/            # React Router 配置和访问控制
+│   ├── styles/            # 少量全局样式和设计变量
+│   ├── test/              # 前端测试初始化与 mock 工具
+│   └── main.tsx           # React 应用入口
+├── index.html
+├── package.json
+├── tsconfig.json
+├── vite.config.ts
+└── lockfile
+```
+
+不建设复杂组件库、主题系统、微前端或独立 BFF；组件抽象以消除明显重复为限。
+
+### 页面与后端接口映射
+
+| 页面/操作 | 后端接口 | 展示要求 |
+| --- | --- | --- |
+| 注册 | `POST /api/v1/users` | 选择普通用户或 admin、填写邮箱和密码、展示稳定错误码 |
+| 登录 | `POST /api/v1/login` | 获取 JWT，登录成功后读取当前用户并按角色进入对应页面 |
+| 当前用户 | `GET /api/v1/users/me` | 展示 ID、邮箱、角色和账号状态 |
+| 商品列表/详情 | `GET /api/v1/items`、`GET /api/v1/items/:id` | 展示名称、描述、状态和由 cents 格式化的金额 |
+| 创建商品 | `POST /api/v1/items` | 仅 admin 页面可见，后端继续执行最终权限校验 |
+| 活动列表/详情 | `GET /api/v1/activities`、`GET /api/v1/activities/:id` | 展示商品、活动时间、状态、总库存、可用库存和已售数量 |
+| 创建活动/库存 | `POST /api/v1/activities` | 仅 admin 页面可见，时间以本地输入、RFC3339/UTC 提交 |
+| 秒杀 | `POST /api/v1/activities/:id/seckill` | 普通用户提交数量，明确展示成功、重复、售罄、未开始/已结束等结果 |
+| 订单列表/详情 | `GET /api/v1/orders`、`GET /api/v1/orders/:id` | 展示订单号、数量、金额、状态和时间，并支持分页 |
+| 取消订单 | `POST /api/v1/orders/:id/cancel` | 仅待处理订单显示按钮，成功后刷新订单和活动库存 |
+| 系统状态 | `/health/live`、`/health/ready` | 必备页面，分别显示进程存活状态与 PostgreSQL readiness，确保当前全部后端接口都有前端展示 |
+
+所有接口失败提示都必须展示用户可读信息，并保留 `request_id` 作为问题追踪编号；不得把数据库或堆栈信息展示给用户。
+
+### 注册角色选择与安全边界
+
+为满足本地演示，注册页面提供 `customer` 和 `admin` 两个 role 选项；这不是让前端自行决定权限，必须同步调整并测试后端 `POST /api/v1/users`：
+
+1. 注册 DTO 增加枚举字段 `role`，只接受 `customer` 或 `admin`，缺省为 `customer`；数据库仍保留 role CHECK 约束；
+2. 增加后端环境开关 `ALLOW_ADMIN_SELF_REGISTRATION`，默认值必须为 `false`；只有显式设为 `true` 的本地演示/测试环境才允许匿名注册 admin；
+3. 当开关关闭而请求 admin 时返回稳定的 403，不能静默降级成普通用户；普通用户注册始终可用；
+4. 前端使用 `VITE_ALLOW_ADMIN_REGISTRATION` 决定是否展示 admin 选项，但该变量只控制界面，不能代替后端校验；
+5. 本地演示配置可同时开启前后端开关；README、`.env.example` 和 `step.md` 必须突出说明生产环境禁止开启；
+6. 登录后的权限仍以 Gin 中间件查询到的数据库实际 role/status 为准，前端路由隐藏和按钮禁用不能作为安全措施；
+7. 后端单元/API/E2E 测试必须覆盖普通用户注册、演示开关开启时 admin 注册成功、关闭时 admin 注册被拒绝、非法 role 返回 400。
+
+该方案是为了降低学习项目演示成本而接受的显式 trade-off。若未来进入真实部署，应删除匿名 admin 自注册能力，改为受控初始化、邀请或运维流程。
+
+### 认证、状态和交互规则
+
+- Phase 1B 延续现有 Bearer JWT；演示版优先保存在内存，允许使用 `sessionStorage` 支持刷新后继续演示，但不得放入 URL、日志或错误信息；
+- 提供明确的账号切换入口：退出当前账号、清除当前 JWT，再使用另一个账号重新登录；浏览器最多记忆最近使用过的邮箱以便回填登录表单，不保存密码、不同时保存多个 JWT，也不提供绕过登录的“一键切换”；
+- 应用启动时调用 `/users/me` 恢复身份；收到 401 时清除 Token 并跳转登录，403 显示权限不足，503 显示依赖暂不可用；
+- TanStack Query 只缓存服务端数据，秒杀和取消成功后主动失效 activity/order 查询；不能用本地乐观库存作为最终结果；
+- 秒杀按钮在请求进行中禁用以防误操作，但一人一单和库存正确性继续由后端事务与唯一约束保证；
+- 金额在传输和状态中始终保持整数 cents，只在展示层格式化；时间提交为 RFC3339，页面按用户本地时区展示并明确时区；
+- Phase 1 为同步订单创建，秒杀成功后直接展示订单并允许进入详情；不得提前模拟 Kafka “排队中”语义；
+- BIGSERIAL ID 在当前演示数据规模可按 number 使用，但 API 类型层应避免对 ID 做算术；未来超过 JavaScript 安全整数范围时统一改为字符串。
+
+### 实施步骤
+
+1. 在 `web/` 初始化 Vite React TypeScript 工程，锁定 Node 与依赖版本，并增加项目内启动、测试和构建命令；
+2. 配置 `/api` 开发代理、环境变量模板、TypeScript strict、ESLint/format 和基础测试环境；
+3. 定义与现有 API 一致的 TypeScript 类型、统一 API Client、错误对象和 request_id 展示组件；
+4. 实现注册、role 选择、登录、退出、身份恢复、最近登录邮箱记忆、账号安全切换和用户/管理员受保护路由；
+5. 按“商品 → 活动 → 秒杀 → 订单 → 取消”顺序实现页面，保证每个后端接口都有可见入口或展示；
+6. 为注册 role 同步实现后端演示开关、配置校验、稳定错误映射和测试，禁止只修改前端；
+7. 增加 loading、empty、error、disabled 和成功反馈，避免重复提交并展示 request_id；
+8. 补充前端组件/API mock 测试，以及连接真实 Gin/PostgreSQL 的最小 E2E 演示测试；
+9. 将前端 build 接入 CI，验证 typecheck、test 和 production build；后端原有测试必须继续通过；
+10. 更新 README、`docs/phase1b-frontend.md`、`step.md` 和 `tree.txt`，记录环境、启动、角色开关和完整演示流程。
+
+### 演示流程
+
+```text
+注册 admin（仅本地开关开启）
+→ 登录管理页面
+→ 创建商品
+→ 创建 active 活动和库存
+→ 退出并清除当前 JWT（可保留最近登录邮箱，不保留密码）
+→ 注册并登录 customer
+→ 浏览活动详情
+→ 提交秒杀
+→ 查看订单
+→ 取消订单并观察库存回补
+```
+
+演示中应能够从失败提示复制 request_id，并在 Go 访问日志中找到对应请求；同时明确说明 Phase 1 的朴素 read-modify-write 并发缺陷仍然存在，前端没有修复或掩盖它。
+
+### 交付物
+
+- `web/` React + Vite + TypeScript 前端源码、锁文件、测试和生产构建配置；
+- 覆盖全部 Phase 1 API 的用户端与管理员端页面；
+- 后端受控 admin 自注册开关、配置示例和相应测试；
+- 前后端本地开发命令、Docker/CI 构建验证；
+- `docs/phase1b-frontend.md` 和更新后的 README、`step.md`、`tree.txt`。
+
+### 阶段门禁
+
+- 新环境能在不修改全局 Go/Node 版本的前提下启动 PostgreSQL、Gin 和 React 页面；
+- 可仅通过页面完整演示 admin 建商品/活动、退出切换账号、customer 登录/秒杀/查单/取消的闭环；
+- Phase 1 的每个业务 API 都有页面入口或可见数据展示，分页、loading、空状态和主要错误状态可验证；
+- `/health/live` 与 `/health/ready` 必须在系统状态页展示，不能因其不是业务 API 而省略；
+- 普通用户无法调用管理接口；admin 自注册默认关闭，只有前后端演示开关同时配置时才在本地开放；
+- Token、密码和数据库内部错误不出现在页面 URL、浏览器日志或后端访问日志中；
+- 前端 typecheck、单测、production build 通过，后端 unit/integration/E2E 和 build 继续通过；
+- 秒杀、库存、权限和订单状态仍完全以后端结果为准，未加入 Redis、Kafka、Next.js/BFF 或任何 Phase 2+ 并发优化；
+- 文档能让演示者从空环境复现完整页面流程。
+
+### 明确不做
+
+- 不追求复杂视觉设计、动画、国际化、SEO、SSR、PWA、微前端或移动端适配；
+- 不使用 Next.js，也不在 Node 层复制或代理业务规则；
+- 不实现支付、验证码、找回密码、头像上传、OAuth、复杂 RBAC 或正式生产级管理员邀请；
+- 不用前端节流、防重复点击或本地库存状态宣称解决超卖；Phase 2 仍从后端朴素实现开始并发实验。
 
 ---
 
@@ -610,19 +758,20 @@ TicketGo/
 
 1. `feat: initialize flashsale monolith`：Phase 0 骨架；
 2. `feat: implement postgres monolith mvp`：Phase 1 主链路；
-3. `test: reproduce inventory overselling`：Phase 2 基线；
-4. `feat: enforce atomic inventory deduction`：数据库并发方案；
-5. `perf: add activity cache and cache protections`：Phase 3A；
-6. `feat: reserve seckill inventory with redis lua`：Phase 3B；
-7. `feat: add distributed rate limiting and nginx`：Phase 3C；
-8. `feat: create orders asynchronously with kafka`：Phase 3D；
-9. `feat: add reliable events and reconciliation`：Phase 4 一致性；
-10. `feat: extract inventory grpc service`：Phase 4 RPC；
-11. `refactor: split monolith into services`：Phase 5；
-12. `feat: add observability and resilience`：Phase 5 治理；
-13. `ci: add build test and image pipeline`：Phase 6；
-14. `deploy: add kubernetes manifests`：Phase 7；
-15. `test: add chaos scenarios and runbooks`：Phase 8。
+3. `feat: add react demo frontend`：Phase 1B 前端页面与受控演示角色注册；
+4. `test: reproduce inventory overselling`：Phase 2 基线；
+5. `feat: enforce atomic inventory deduction`：数据库并发方案；
+6. `perf: add activity cache and cache protections`：Phase 3A；
+7. `feat: reserve seckill inventory with redis lua`：Phase 3B；
+8. `feat: add distributed rate limiting and nginx`：Phase 3C；
+9. `feat: create orders asynchronously with kafka`：Phase 3D；
+10. `feat: add reliable events and reconciliation`：Phase 4 一致性；
+11. `feat: extract inventory grpc service`：Phase 4 RPC；
+12. `refactor: split monolith into services`：Phase 5；
+13. `feat: add observability and resilience`：Phase 5 治理；
+14. `ci: add build test and image pipeline`：Phase 6；
+15. `deploy: add kubernetes manifests`：Phase 7；
+16. `test: add chaos scenarios and runbooks`：Phase 8。
 
 ## 5. 每周执行节奏
 
