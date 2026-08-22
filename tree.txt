@@ -1,0 +1,115 @@
+TicketGo/
+├── .cache/                                         —— 存放项目内 Go 模块、编译、测试和 vet 缓存，不属于业务源码。
+│   ├── go-build/                                   —— Go 常规构建与测试使用的项目级缓存目录（内部生成文件不逐项列出）。
+│   ├── go-build-build/                             —— Go build 命令使用的独立项目级构建缓存目录（内部生成文件不逐项列出）。
+│   ├── go-build-vet/                               —— Go vet 命令使用的独立项目级分析缓存目录（内部生成文件不逐项列出）。
+│   └── go-mod/                                     —— Go 依赖模块的项目级下载缓存目录（内部第三方文件不逐项列出）。
+├── .git/                                           —— 保存 Git 版本库对象、索引和引用等内部元数据（内部生成文件不逐项列出）。
+├── .github/                                        —— 保存 GitHub 平台相关配置。
+│   └── workflows/                                  —— 保存 GitHub Actions 工作流。
+│       └── ci.yml                                  —— 定义格式检查、vet、测试和构建的基础 CI 流程。
+├── .tools/                                         —— 存放不会影响系统全局环境的项目内工具链。
+│   └── go/                                         —— 存放项目锁定的便携版 Go 1.27.0 工具链（官方内部文件不逐项列出）。
+├── bin/                                            —— 存放本地构建产物。
+│   └── ticketgo.exe                                —— Windows 下构建得到的 TicketGo 服务可执行文件。
+├── cmd/                                            —— 存放可执行程序入口。
+│   └── server/                                     —— TicketGo HTTP 服务入口目录。
+│       └── main.go                                 —— 初始化日志和配置、监听退出信号并启动应用。
+├── docs/                                           —— 存放架构、接口、数据库和阶段实验文档。
+│   ├── postmortems/                                —— 存放故障实验的复盘记录。
+│   │   ├── phase1-postgresql-outage.md             —— 记录 Phase 1 PostgreSQL 停机、检测和恢复实验。
+│   │   └── phase1-transaction-rollback.md          —— 记录 Phase 1 事务中途失败及完整回滚实验。
+│   ├── api.md                                      —— 说明 Phase 1 API、权限、分页规则和调用示例。
+│   ├── database.md                                 —— 说明业务表字段、约束、索引、状态机和取消规则。
+│   ├── phase0-bootstrap.md                         —— 说明 Phase 0 工程骨架、启动链路和健康检查设计。
+│   └── phase1-monolith.md                          —— 总结 Phase 1 单体 MVP 的实现、测试、取舍和已知并发缺陷。
+├── internal/                                       —— 存放仅供本项目内部使用的应用业务代码。
+│   ├── activity/                                   —— 活动领域模块。
+│   │   ├── handler.go                              —— 处理活动创建、列表和详情 HTTP 请求。
+│   │   ├── model.go                                —— 定义活动实体及创建活动输入 DTO。
+│   │   ├── repository.go                           —— 使用 PostgreSQL 实现活动与库存的数据访问。
+│   │   ├── service.go                              —— 实现活动参数校验、默认状态和领域错误转换。
+│   │   └── service_test.go                         —— 测试活动时间范围等 service 业务校验。
+│   ├── app/                                        —— 应用装配和生命周期模块。
+│   │   └── app.go                                  —— 建立数据库连接、装配路由并管理 HTTP 服务优雅退出。
+│   ├── auth/                                       —— 身份认证与授权模块。
+│   │   ├── middleware.go                           —— 校验 Bearer Token、用户状态和管理员权限。
+│   │   ├── token.go                                —— 使用 HMAC-SHA256 签发和解析带过期时间的 JWT。
+│   │   └── token_test.go                           —— 测试 JWT 签发、解析和过期拒绝行为。
+│   ├── config/                                     —— 环境变量配置模块。
+│   │   ├── config.go                               —— 加载并校验 HTTP、数据库和认证配置。
+│   │   └── config_test.go                          —— 测试默认配置及非法配置的快速失败行为。
+│   ├── domain/                                     —— 跨业务模块共享的领域错误定义。
+│   │   └── errors.go                               —— 定义无效参数、冲突、售罄和活动不可用等稳定错误。
+│   ├── health/                                     —— 服务健康检查模块。
+│   │   ├── handler.go                              —— 实现 liveness 与 PostgreSQL readiness 接口。
+│   │   └── handler_test.go                         —— 测试依赖故障时 readiness 返回 503 且不泄露内部错误。
+│   ├── httpapi/                                    —— HTTP 路由及通用 Web 能力模块。
+│   │   ├── apierror/                               —— HTTP 错误映射子模块。
+│   │   │   └── apierror.go                         —— 把领域错误和校验错误转换成稳定的 HTTP JSON 响应。
+│   │   ├── middleware/                             —— Gin 通用中间件目录。
+│   │   │   ├── access_log.go                       —— 记录包含 request_id、状态码和耗时的结构化访问日志。
+│   │   │   ├── recovery.go                         —— 捕获 panic、记录堆栈并返回统一 500 响应。
+│   │   │   ├── request_id.go                       —— 接收或生成请求 ID 并写入上下文和响应头。
+│   │   │   ├── request_id_test.go                  —— 测试调用方传入的请求 ID 会被正确保留。
+│   │   │   └── timeout.go                          —— 为每个 HTTP 请求注入有截止时间的 context。
+│   │   ├── pagination/                             —— 列表分页参数解析子模块。
+│   │   │   └── pagination.go                       —— 校验 limit 和 offset 的取值及硬上限。
+│   │   ├── router.go                               —— 装配健康、用户、商品、活动和订单路由及权限中间件。
+│   │   └── router_test.go                          —— 测试 live/ready 语义分离及请求 ID 行为。
+│   ├── inventory/                                  —— 库存领域模块。
+│   │   ├── model.go                                —— 定义秒杀所需的活动与库存联合状态。
+│   │   └── repository.go                           —— 实现库存读取、朴素绝对值回写和取消回补 SQL。
+│   ├── item/                                       —— 商品领域模块。
+│   │   ├── handler.go                              —— 处理商品创建、列表和详情 HTTP 请求。
+│   │   ├── model.go                                —— 定义商品实体及创建商品输入 DTO。
+│   │   ├── repository.go                           —— 实现商品的 PostgreSQL 创建和查询操作。
+│   │   ├── service.go                              —— 实现商品名称、价格和默认状态业务校验。
+│   │   └── service_test.go                         —— 测试商品非法价格会被 service 拒绝。
+│   ├── order/                                      —— 秒杀与订单领域模块。
+│   │   ├── handler.go                              —— 处理秒杀、订单列表、详情和取消 HTTP 请求。
+│   │   ├── integration_test.go                     —— 使用真实 PostgreSQL 测试提交、约束、回滚和取消回补。
+│   │   ├── model.go                                —— 定义订单实体及秒杀输入 DTO。
+│   │   ├── repository.go                           —— 实现订单和秒杀记录的 PostgreSQL 数据访问。
+│   │   ├── service.go                              —— 定义秒杀与取消事务边界并保留 Phase 2 所需竞争窗口。
+│   │   └── service_test.go                         —— 单测活动状态、库存、数量和重复用户等秒杀规则。
+│   └── user/                                       —— 用户领域模块。
+│       ├── handler.go                              —— 处理注册、登录和当前用户 HTTP 请求。
+│       ├── model.go                                —— 定义用户实体、注册 DTO 和登录 DTO。
+│       ├── repository.go                           —— 实现用户创建及按邮箱或 ID 查询的 PostgreSQL 操作。
+│       ├── service.go                              —— 实现邮箱规范化、bcrypt 密码哈希、登录和 Token 签发。
+│       └── service_test.go                         —— 测试密码哈希、邮箱规范化和无效登录行为。
+├── migrations/                                     —— 存放 golang-migrate 管理的数据库版本脚本。
+│   ├── 000001_bootstrap.down.sql                   —— 回滚 Phase 0 空操作 bootstrap migration。
+│   ├── 000001_bootstrap.up.sql                     —— 建立 Phase 0 migration 管理流程而不创建业务表。
+│   ├── 000002_phase1_monolith.down.sql             —— 删除 Phase 1 全部业务表以回滚 schema。
+│   └── 000002_phase1_monolith.up.sql               —— 创建 Phase 1 六张业务表、约束和索引。
+├── pkg/                                            —— 存放可被项目多个内部模块复用的基础包。
+│   ├── database/                                   —— PostgreSQL 连接池基础包。
+│   │   └── database.go                             —— 创建、配置和探测 database/sql + pgx 连接池。
+│   ├── logger/                                     —— 结构化日志基础包。
+│   │   └── logger.go                               —— 创建统一配置的生产级 zap logger。
+│   └── response/                                   —— HTTP JSON 响应基础包。
+│       └── response.go                             —— 输出统一成功/错误结构并携带 request_id。
+├── scripts/                                        —— 存放项目环境辅助脚本。
+│   └── bootstrap-go.ps1                            —— 下载、校验并解压项目内锁定的 Windows Go 工具链。
+├── tests/                                          —— 存放跨模块测试。
+│   └── e2e/                                        —— 端到端测试目录。
+│       └── phase1_test.go                          —— 使用真实 PostgreSQL 和 HTTP Router 验证 Phase 1 完整业务闭环及错误映射。
+├── .dockerignore                                   —— 指定 Docker 构建上下文中需要排除的本地文件。
+├── .env                                            —— 保存当前机器的本地开发环境变量和密钥，不提交版本库。
+├── .env.example                                    —— 提供可复制的环境变量模板和安全配置说明。
+├── .gitignore                                      —— 排除本地环境、缓存、工具链和构建产物。
+├── docker-compose.yml                              —— 定义本地 PostgreSQL 17.6 服务、健康检查和持久卷。
+├── Dockerfile                                      —— 使用多阶段构建生成 TicketGo Linux 容器镜像。
+├── go.mod                                          —— 声明 Go 版本、module 名称和直接/间接依赖。
+├── go.sum                                          —— 锁定并校验 Go 依赖模块内容。
+├── Idea.md                                         —— 记录项目背景、学习路线和高并发抢票系统总体构想。
+├── LICENSE                                         —— 声明项目的 MIT 开源许可证。
+├── Makefile                                        —— 提供环境、格式化、测试、构建、运行、Compose 和 migration 命令。
+├── plan.md                                         —— 定义 TicketGo 从 Phase 0 到后续分布式阶段的严格执行计划。
+├── README.md                                       —— 提供项目简介、环境基线、启动方法和文档入口。
+├── step.md                                         —— 持续记录各 Phase 的实现过程、验证结果、进度和运行指令。
+└── tree.txt                                        —— 展示当前项目文件结构并用中文说明每个文件的作用。
+
+说明：`.cache` 约 1.9 万个文件、`.tools/go` 约 1.5 万个文件，均为可再生成的缓存或官方工具链内容；`.git` 为版本控制内部数据，因此本清单按目录说明而不展开其中约 3.5 万个非项目源文件。
