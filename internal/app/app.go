@@ -26,7 +26,7 @@ func Run(ctx context.Context, cfg config.Config, logger *zap.Logger) error {
 
 	server := &http.Server{
 		Addr:              cfg.HTTP.Address,
-		Handler:           httpapi.NewRouter(db, cfg.HTTP.RequestTimeout, logger),
+		Handler:           httpapi.NewRouter(db, cfg, logger),
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,

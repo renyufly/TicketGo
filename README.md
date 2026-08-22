@@ -1,6 +1,6 @@
 # TicketGo
 
-TicketGo 是按照 `plan.md` 分阶段演进的 Go 高并发抢票系统。当前实现严格停留在 Phase 0：提供可重复启动、可迁移、可观测、可优雅退出的模块化单体骨架，不包含业务 API、Redis、Kafka、gRPC 或微服务。
+TicketGo 是按照 `plan.md` 分阶段演进的 Go 高并发抢票系统。当前已完成 Phase 1 PostgreSQL 单体 MVP：提供用户、商品、活动/库存、秒杀和订单闭环，仍故意保留朴素 read-modify-write 的并发缺陷，供 Phase 2 实验。当前不包含 Redis、Kafka、gRPC 或微服务。
 
 ## 环境基线
 
@@ -33,7 +33,7 @@ curl -i http://localhost:8080/health/live
 curl -i http://localhost:8080/health/ready
 ```
 
-Windows PowerShell 可用 `Copy-Item .env.example .env` 代替 `cp`。应用直接读取环境变量；默认值与 `.env.example` 的本地开发值一致，因此 Phase 0 可不加载 `.env` 文件直接启动。生产环境必须显式注入安全配置。
+Windows PowerShell 可用 `Copy-Item .env.example .env` 代替 `cp`。应用直接读取环境变量；`JWT_SECRET` 必须至少 32 字符。Make 会加载项目根目录 `.env`，生产环境必须显式注入独立的安全配置。
 
 若本机 5432 已被其他 PostgreSQL 占用，可在 `.env` 中同时把 `POSTGRES_PORT` 改为例如 `55432`，并把 `DATABASE_URL` 的端口同步改为 `55432`。不要停止或改写现有数据库实例。
 
@@ -52,4 +52,4 @@ make migrate-create NAME=add_example
 make check
 ```
 
-完整启动链路、请求路径、配置和故障行为见 `docs/phase0-bootstrap.md`。
+完整启动链路见 `docs/phase0-bootstrap.md`；Phase 1 的数据库、API、实现与故障记录分别见 `docs/database.md`、`docs/api.md`、`docs/phase1-monolith.md` 和 `docs/postmortems/`。

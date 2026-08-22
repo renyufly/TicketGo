@@ -44,3 +44,4 @@ func Open(parent context.Context, cfg Config) (*DB, error) {
 }
 
 func (db *DB) QueryTimeout() time.Duration { return db.queryTimeout }
+func (db *DB) SQL() *sql.DB                { return db.DB }
