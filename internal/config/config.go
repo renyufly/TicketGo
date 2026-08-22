@@ -1,0 +1,110 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+
+	"ticketgo/pkg/database"
+)
+
+type Config struct {
+	Environment string
+	HTTP        HTTPConfig
+	Database    database.Config
+}
+
+type HTTPConfig struct {
+	Address           string
+	ReadTimeout       time.Duration
+	ReadHeaderTimeout time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	RequestTimeout    time.Duration
+	ShutdownTimeout   time.Duration
+}
+
+func Load() (Config, error) {
+	cfg := Config{
+		Environment: env("APP_ENV", "development"),
+		HTTP: HTTPConfig{
+			Address: env("HTTP_ADDRESS", ":8080"),
+		},
+		Database: database.Config{
+			URL: env("DATABASE_URL", "postgres://ticketgo:ticketgo_local_password@localhost:5432/ticketgo?sslmode=disable"),
+		},
+	}
+
+	var err error
+	if cfg.HTTP.ReadTimeout, err = duration("HTTP_READ_TIMEOUT", "5s"); err != nil {
+		return Config{}, err
+	}
+	if cfg.HTTP.ReadHeaderTimeout, err = duration("HTTP_READ_HEADER_TIMEOUT", "2s"); err != nil {
+		return Config{}, err
+	}
+	if cfg.HTTP.WriteTimeout, err = duration("HTTP_WRITE_TIMEOUT", "10s"); err != nil {
+		return Config{}, err
+	}
+	if cfg.HTTP.IdleTimeout, err = duration("HTTP_IDLE_TIMEOUT", "60s"); err != nil {
+		return Config{}, err
+	}
+	if cfg.HTTP.RequestTimeout, err = duration("HTTP_REQUEST_TIMEOUT", "3s"); err != nil {
+		return Config{}, err
+	}
+	if cfg.HTTP.ShutdownTimeout, err = duration("HTTP_SHUTDOWN_TIMEOUT", "10s"); err != nil {
+		return Config{}, err
+	}
+	if cfg.Database.MaxOpenConns, err = integer("DB_MAX_OPEN_CONNS", 25); err != nil {
+		return Config{}, err
+	}
+	if cfg.Database.MaxIdleConns, err = integer("DB_MAX_IDLE_CONNS", 10); err != nil {
+		return Config{}, err
+	}
+	if cfg.Database.ConnMaxLifetime, err = duration("DB_CONN_MAX_LIFETIME", "30m"); err != nil {
+		return Config{}, err
+	}
+	if cfg.Database.ConnMaxIdleTime, err = duration("DB_CONN_MAX_IDLE_TIME", "5m"); err != nil {
+		return Config{}, err
+	}
+	if cfg.Database.ConnectTimeout, err = duration("DB_CONNECT_TIMEOUT", "5s"); err != nil {
+		return Config{}, err
+	}
+	if cfg.Database.QueryTimeout, err = duration("DB_QUERY_TIMEOUT", "3s"); err != nil {
+		return Config{}, err
+	}
+
+	if cfg.Database.URL == "" {
+		return Config{}, errors.New("DATABASE_URL must not be empty")
+	}
+	if cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns {
+		return Config{}, errors.New("DB_MAX_IDLE_CONNS must not exceed DB_MAX_OPEN_CONNS")
+	}
+	return cfg, nil
+}
+
+func env(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+func duration(key, fallback string) (time.Duration, error) {
+	value := env(key, fallback)
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive Go duration, got %q", key, value)
+	}
+	return parsed, nil
+}
+
+func integer(key string, fallback int) (int, error) {
+	value := env(key, strconv.Itoa(fallback))
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer, got %q", key, value)
+	}
+	return parsed, nil
+}
