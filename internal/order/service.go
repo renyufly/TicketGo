@@ -47,14 +47,14 @@ func NewService(db Beginner, r *Repository, i *inventory.Repository) *Service {
    -> 提交事务     */
 func (s *Service) Seckill(ctx context.Context, userID, activityID, quantity int64) (Order, error) {
 	/*
-	ctx：请求上下文，用于超时、取消请求，以及传递给数据库操作
-	userID：谁在买
-	activityID：参加哪个秒杀活动
-	quantity：买几件
-	返回 Order：成功时返回创建好的订单
-	返回 error：失败原因
+		ctx：请求上下文，用于超时、取消请求，以及传递给数据库操作
+		userID：谁在买
+		activityID：参加哪个秒杀活动
+		quantity：买几件
+		返回 Order：成功时返回创建好的订单
+		返回 error：失败原因
 	*/
-	
+
 	// 参数校验
 	if userID <= 0 || activityID <= 0 || quantity <= 0 || quantity > 10 {
 		return Order{}, domain.New(domain.ErrInvalid, "valid activity and quantity between 1 and 10 are required", nil)
@@ -124,7 +124,7 @@ func (s *Service) Seckill(ctx context.Context, userID, activityID, quantity int6
 	}
 	// 计算订单价格
 	pending := Order{OrderNo: orderNo, UserID: userID, ActivityID: activityID, Quantity: quantity, UnitPriceCents: state.PriceCents, TotalPriceCents: state.PriceCents * quantity}
-	
+
 	// beforeOrderInsert：测试Hook
 	// 允许测试代码在订单真正插入数据库前修改 pending.
 	if s.beforeOrderInsert != nil {
@@ -221,7 +221,7 @@ func (s *Service) Cancel(ctx context.Context, userID, id int64) (Order, error) {
 	// ForUpdate 通常意味着 SQL 会给订单记录加行锁
 	// 避免两个请求同时取消同一个订单
 	o, err := s.repo.ByIDForUpdate(ctx, tx, userID, id)
-	
+
 	if errors.Is(err, sql.ErrNoRows) {
 		// 如果数据库没有查到订单
 		return Order{}, domain.New(domain.ErrNotFound, "order not found", err)

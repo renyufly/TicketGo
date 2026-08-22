@@ -66,6 +66,7 @@ func (r *Repository) CreateRecord(ctx context.Context, q Querier, o Order) error
 	}
 	return nil
 }
+
 // 检查这个用户是否已经参加过这个秒杀活动
 func (r *Repository) RecordExists(ctx context.Context, q Querier, userID, activityID int64) (bool, error) {
 	var exists bool

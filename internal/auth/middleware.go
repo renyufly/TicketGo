@@ -21,7 +21,7 @@ const claimsKey = "auth_claims"
 // 表示：登录用户才能访问
 func Required(manager *Manager, db *sql.DB) gin.HandlerFunc {
 	// 认证中间件Middleware
-	
+
 	return func(c *gin.Context) {
 		// 读取 Authorization -> 是否为 Bearer xxx？
 		header := c.GetHeader("Authorization")

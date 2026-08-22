@@ -1,6 +1,6 @@
 // 轻量级 JWT（JSON Web Token）认证管理器，
 // 使用 HMAC-SHA256（HS256） 对 Token 进行签名和验证
-// 没有使用第三方 JWT 库，而是直接通过 Go 标准库的 HMAC + SHA256 
+// 没有使用第三方 JWT 库，而是直接通过 Go 标准库的 HMAC + SHA256
 // + Base64 + JSON 实现了 HS256 JWT 的核心机制
 // 登录成功 -> Issue(userID, role) -> 生成 JWT
 // -> 客户端携带 JWT 请求 API -> Parse(token)
@@ -111,7 +111,7 @@ func (m *Manager) sign(value string) []byte {
 	return mac.Sum(nil)
 }
 
-// 使用 JWT 所需的 Base64 URL 编码 
+// 使用 JWT 所需的 Base64 URL 编码
 func encode(value []byte) string { return base64.RawURLEncoding.EncodeToString(value) }
 func decodeOrNil(value string) []byte {
 	decoded, _ := base64.RawURLEncoding.DecodeString(value)

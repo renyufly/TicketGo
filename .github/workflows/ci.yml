@@ -17,7 +17,13 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Verify formatting
-        run: test -z "$(gofmt -l .)"
+        run: |
+          unformatted="$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)"
+          if [ -n "$unformatted" ]; then
+            echo "The following tracked Go files are not formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
       - name: Vet
         run: go vet ./...
       - name: Test
