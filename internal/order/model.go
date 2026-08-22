@@ -8,7 +8,8 @@ import "time"
 // 注意：价格使用 int64 的分而不是 float64 的元，为了避免浮点数精度问题
 // JSON Tag 表示转换成json后的名字
 // 注意：CancelledAt是 *time.Time，因为订单可能没有被取消，
-//       omitempty 表示如果它是 nil，JSON 中可以直接省略这个字段
+//
+//	omitempty 表示如果它是 nil，JSON 中可以直接省略这个字段
 type Order struct {
 	ID              int64      `json:"id"`
 	OrderNo         string     `json:"order_no"`

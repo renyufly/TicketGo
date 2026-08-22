@@ -27,7 +27,7 @@ func Parse(c *gin.Context) (Page, error) {
 	// 有 limit → 使用用户传入的值
 	// 没有 → 默认 "20"
 	limit, err := positiveInt(c.DefaultQuery("limit", "20"))
-	
+
 	if err != nil || limit > 100 {
 		return Page{}, fmt.Errorf("limit must be between 1 and 100")
 	}

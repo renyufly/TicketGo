@@ -2,7 +2,7 @@
 // 把中间件、认证、业务模块和 API 地址全部组装起来
 /*
 创建 Gin HTTP 服务器的路由结构，
-把中间件、JWT 认证、管理员权限，以及 user/item/activity/order 
+把中间件、JWT 认证、管理员权限，以及 user/item/activity/order
 等业务 Handler 统一组装并映射到具体 API.
 本身基本不负责业务逻辑，而是负责：
 哪个 URL → 经过哪些中间件 → 调哪个 Handler
@@ -57,7 +57,7 @@ func NewRouter(db DatabaseHealth, cfg config.Config, logger *zap.Logger) http.Ha
 	router.GET("/health/ready", healthHandler.Ready)
 
 	tokens := auth.NewManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
-	
+
 	// 初始化各业务模块
 	// Repository(数据库访问) → Service(业务逻辑) → Handler(HTTP处理)
 	userHandler := user.NewHandler(user.NewService(user.NewRepository(db.SQL()), tokens, cfg.Auth.AllowAdminSelfRegistration))
@@ -86,7 +86,7 @@ func NewRouter(db DatabaseHealth, cfg config.Config, logger *zap.Logger) http.Ha
 	authorized.GET("/orders", orderHandler.List)
 	authorized.GET("/orders/:id", orderHandler.Get)
 	authorized.POST("/orders/:id/cancel", orderHandler.Cancel)
-	
+
 	// 管理员接口:
 	// 在“必须登录”的基础上，再增加：必须是 admin
 	admin := authorized.Group("")
