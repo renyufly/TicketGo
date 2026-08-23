@@ -10,21 +10,36 @@ TicketGo/
 │   └── workflows/                                  —— 保存 GitHub Actions 工作流。
 │       └── ci.yml                                  —— 定义 Go 与 React 的格式、lint、测试和生产构建 CI 门禁。
 ├── .tools/                                         —— 存放不会影响系统全局环境的项目内工具链。
-│   └── go/                                         —— 存放项目锁定的便携版 Go 1.27.0 工具链（官方内部文件不逐项列出）。
+│   ├── go/                                         —— 存放项目锁定的便携版 Go 1.27.0 工具链（官方内部文件不逐项列出）。
+│   └── k6/                                         —— 存放项目锁定并校验的便携版 k6 v2.2.0（官方二进制不展开）。
 ├── bin/                                            —— 存放本地构建产物。
+│   ├── phase2lab.exe                               —— Windows 下构建的 Phase 2 数据准备、校验与 PostgreSQL 实验工具。
 │   └── ticketgo.exe                                —— Windows 下构建得到的 TicketGo 服务可执行文件。
 ├── cmd/                                            —— 存放可执行程序入口。
+│   ├── phase2lab/                                  —— Phase 2 可复现数据与数据库实验 CLI。
+│   │   └── main.go                                 —— 实现 prepare、verify、monitor、internals 等子命令。
 │   └── server/                                     —— TicketGo HTTP 服务入口目录。
 │       └── main.go                                 —— 初始化日志和配置、监听退出信号并启动应用。
 ├── docs/                                           —— 存放架构、接口、数据库和阶段实验文档。
+│   ├── adr/                                        —— 存放架构决策记录。
+│   │   └── 0001-inventory-concurrency-control.md   —— 记录条件原子 UPDATE 的选型数据、代价与回滚方案。
+│   ├── database/                                   —— 存放 PostgreSQL 内部机制与数据库对比文档。
+│   │   ├── mysql-vs-postgresql.md                  —— 对比 PostgreSQL 与 MySQL/InnoDB 的 MVCC、锁和索引差异。
+│   │   └── postgresql-internals.md                 —— 解释 MVCC、VACUUM、WAL、EXPLAIN 和索引类型实测。
 │   ├── postmortems/                                —— 存放故障实验的复盘记录。
 │   │   ├── phase1-postgresql-outage.md             —— 记录 Phase 1 PostgreSQL 停机、检测和恢复实验。
 │   │   └── phase1-transaction-rollback.md          —— 记录 Phase 1 事务中途失败及完整回滚实验。
-│   ├── api.md                                      —— 说明 Phase 1 API、权限、分页规则和调用示例。
+│   ├── results/phase2/                             —— 保存 Phase 2 可提交的汇总与 PostgreSQL 原始计划。
+│   │   ├── concurrency-summary.json                —— 汇总四种策略三轮指标与正确性结果。
+│   │   ├── index-types-explain.txt                 —— 保存六类 PostgreSQL 索引的 EXPLAIN 输出。
+│   │   ├── order-index-explain.txt                 —— 保存百万订单联合索引前后和写代价输出。
+│   │   └── postgresql-internals.json               —— 保存 MVCC、Dead Tuple/VACUUM 和 WAL 结构化结果。
+│   ├── api.md                                      —— 说明 Phase 2 API、并发错误、权限和分页规则。
 │   ├── database.md                                 —— 说明业务表字段、约束、索引、状态机和取消规则。
 │   ├── phase0-bootstrap.md                         —— 说明 Phase 0 工程骨架、启动链路和健康检查设计。
 │   ├── phase1-monolith.md                          —— 总结 Phase 1 单体 MVP 的实现、测试、取舍和已知并发缺陷。
-│   └── phase1b-frontend.md                         —— 说明 React 演示页面的环境、结构、安全边界、启动和验证结果。
+│   ├── phase1b-frontend.md                         —— 说明 React 演示页面的环境、结构、安全边界、启动和验证结果。
+│   └── phase2-concurrency-report.md                —— 汇总固定负载、三方案对比、数据库瓶颈与阶段结论。
 ├── internal/                                       —— 存放仅供本项目内部使用的应用业务代码。
 │   ├── activity/                                   —— 活动领域模块。
 │   │   ├── handler.go                              —— 处理活动创建、列表和详情 HTTP 请求。
@@ -61,7 +76,7 @@ TicketGo/
 │   │   └── router_test.go                          —— 测试 live/ready 语义分离及请求 ID 行为。
 │   ├── inventory/                                  —— 库存领域模块。
 │   │   ├── model.go                                —— 定义秒杀所需的活动与库存联合状态。
-│   │   └── repository.go                           —— 实现库存读取、朴素绝对值回写和取消回补 SQL。
+│   │   └── repository.go                           —— 实现普通/锁定读取、朴素、条件 UPDATE、CAS 和回补 SQL。
 │   ├── item/                                       —— 商品领域模块。
 │   │   ├── handler.go                              —— 处理商品创建、列表和详情 HTTP 请求。
 │   │   ├── model.go                                —— 定义商品实体及创建商品输入 DTO。
@@ -69,11 +84,12 @@ TicketGo/
 │   │   ├── service.go                              —— 实现商品名称、价格和默认状态业务校验。
 │   │   └── service_test.go                         —— 测试商品非法价格会被 service 拒绝。
 │   ├── order/                                      —— 秒杀与订单领域模块。
+│   │   ├── concurrency.go                          —— 定义四种库存策略及超时、重试、退避配置。
 │   │   ├── handler.go                              —— 处理秒杀、订单列表、详情和取消 HTTP 请求。
-│   │   ├── integration_test.go                     —— 使用真实 PostgreSQL 测试提交、约束、回滚和取消回补。
+│   │   ├── integration_test.go                     —— 真实 PostgreSQL 测试回滚、超卖复现、三方案不变量和锁超时。
 │   │   ├── model.go                                —— 定义订单实体及秒杀输入 DTO。
 │   │   ├── repository.go                           —— 实现订单和秒杀记录的 PostgreSQL 数据访问。
-│   │   ├── service.go                              —— 定义秒杀与取消事务边界并保留 Phase 2 所需竞争窗口。
+│   │   ├── service.go                              —— 编排库存并发策略、事务、订单与取消，并映射受控竞争错误。
 │   │   └── service_test.go                         —— 单测活动状态、库存、数量和重复用户等秒杀规则。
 │   └── user/                                       —— 用户领域模块。
 │       ├── handler.go                              —— 处理注册、登录和当前用户 HTTP 请求。
@@ -94,10 +110,20 @@ TicketGo/
 │   └── response/                                   —— HTTP JSON 响应基础包。
 │       └── response.go                             —— 输出统一成功/错误结构并携带 request_id。
 ├── scripts/                                        —— 存放项目环境辅助脚本。
-│   └── bootstrap-go.ps1                            —— 下载、校验并解压项目内锁定的 Windows Go 工具链。
+│   ├── sql/                                        —— Phase 2 隔离 PostgreSQL 实验 SQL。
+│   │   ├── phase2-index-types.sql                  —— 建立 B-Tree/GIN/GiST/BRIN/Partial/Expression 实验与 EXPLAIN。
+│   │   └── phase2-order-index.sql                  —— 生成百万订单并比较联合索引读写与空间代价。
+│   ├── bootstrap-go.ps1                            —— 下载、校验并解压项目内锁定的 Windows Go 工具链。
+│   ├── bootstrap-k6.ps1                            —— 下载、校验并解压项目内锁定的 Windows k6 工具链。
+│   ├── reproduce-phase2.ps1                        —— 一条命令复现 Phase 2 正式负载、低冲突对照、汇总和 PostgreSQL 实验。
+│   ├── run-phase2-load.ps1                         —— 自动执行数据重建、四策略多轮 k6、监控与正确性校验。
+│   ├── run-phase2-postgresql-labs.ps1              —— 自动执行 PostgreSQL 内部机制、百万订单和索引实验。
+│   └── summarize-phase2-results.ps1                —— 从忽略的 raw 文件生成可提交的结构化汇总。
 ├── tests/                                          —— 存放跨模块测试。
-│   └── e2e/                                        —— 端到端测试目录。
-│       └── phase1_test.go                          —— 使用真实 PostgreSQL 验证 Phase 1 闭环及 Phase 1B admin 注册开关。
+│   ├── e2e/                                        —— 端到端测试目录。
+│   │   └── phase1_test.go                          —— 使用真实 PostgreSQL 验证 Phase 1 闭环及 Phase 1B admin 注册开关。
+│   └── load/                                       —— 保存可重复负载测试脚本。
+│       └── phase2-seckill.js                       —— 以唯一测试用户执行固定 1000 抢 100 并输出 k6 指标。
 ├── web/                                            —— Phase 1B React + Vite + TypeScript 演示前端。
 │   ├── e2e/                                        —— 存放连接真实 Gin/PostgreSQL 的最小演示脚本。
 │   │   └── demo-flow.mjs                           —— 验证注册、商品、活动、秒杀、查单、取消和库存回补闭环。
@@ -146,6 +172,7 @@ TicketGo/
 │   ├── .node-version                               —— 锁定项目 Node.js 24.11.1。
 │   ├── .npmrc                                      —— 固定项目 npm 缓存并关闭非必要联网提示。
 │   ├── .prettierignore                             —— 排除生成产物与 lockfile 的格式化。
+│   ├── .prettierrc.json                            —— 让 Prettier 在 Windows/Linux 自动沿用文件换行，保证本地门禁一致。
 │   ├── Dockerfile                                  —— 用锁定 Node 构建并由 Nginx 提供静态页面。
 │   ├── eslint.config.js                            —— 配置 TypeScript、React Hooks 与 Vite lint。
 │   ├── go.mod                                      —— 隔离根 Go module 与 node_modules 第三方 Go 示例。
@@ -165,10 +192,10 @@ TicketGo/
 ├── go.sum                                          —— 锁定并校验 Go 依赖模块内容。
 ├── Idea.md                                         —— 记录项目背景、学习路线和高并发抢票系统总体构想。
 ├── LICENSE                                         —— 声明项目的 MIT 开源许可证。
-├── Makefile                                        —— 提供 Go/React 环境、测试、构建、运行、Compose 和 migration 命令。
+├── Makefile                                        —— 提供 Go/React、Phase 2 负载/数据库实验、构建、Compose 和 migration 命令。
 ├── plan.md                                         —— 定义 TicketGo 从 Phase 0 到后续分布式阶段的严格执行计划。
-├── README.md                                       —— 提供 Phase 1B 环境、前后端启动、开关、门禁和文档入口。
+├── README.md                                       —— 提供 Phase 2 环境、启动、并发/数据库实验、门禁和文档入口。
 ├── step.md                                         —— 持续记录各 Phase 的实现过程、验证结果、进度和运行指令。
 └── tree.txt                                        —— 展示当前项目文件结构并用中文说明每个文件的作用。
 
-说明：`.cache`、`.tools/go`、`web/node_modules` 和 `web/dist` 均为可再生成的缓存、工具链、第三方依赖或构建产物；`.git` 为版本控制内部数据，因此本清单按目录说明而不展开内部文件。
+说明：`.cache`、`.tools/go`、`.tools/k6`、`tests/load/.generated`、`docs/results/phase2/raw`、`web/node_modules` 和 `web/dist` 均为可再生成的缓存、工具链、匿名测试数据、原始结果或第三方构建产物；`.git` 为版本控制内部数据，因此不展开内部文件。

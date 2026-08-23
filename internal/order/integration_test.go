@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,43 @@ func integrationDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+type concurrentFixture struct {
+	itemID, activityID int64
+	userIDs            []int64
+}
+
+func seedConcurrent(t *testing.T, db *sql.DB, users, total int) concurrentFixture {
+	t.Helper()
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	var f concurrentFixture
+	if err := db.QueryRowContext(ctx, `INSERT INTO items(name,price_cents) VALUES($1,1000) RETURNING id`, fmt.Sprintf("phase2 item %d", suffix)).Scan(&f.itemID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `INSERT INTO activities(item_id,name,price_cents,starts_at,ends_at,status) VALUES($1,$2,800,CURRENT_TIMESTAMP-INTERVAL '1 hour',CURRENT_TIMESTAMP+INTERVAL '1 hour','active') RETURNING id`, f.itemID, fmt.Sprintf("phase2 activity %d", suffix)).Scan(&f.activityID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO inventories(activity_id,total,available) VALUES($1,$2,$2)`, f.activityID, total); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < users; i++ {
+		var userID int64
+		if err := db.QueryRowContext(ctx, `INSERT INTO users(email,password_hash) VALUES($1,'hash') RETURNING id`, fmt.Sprintf("phase2-%d-%d@example.test", suffix, i)).Scan(&userID); err != nil {
+			t.Fatal(err)
+		}
+		f.userIDs = append(f.userIDs, userID)
+	}
+	t.Cleanup(func() {
+		db.Exec(`DELETE FROM seckill_records WHERE activity_id=$1`, f.activityID)
+		db.Exec(`DELETE FROM orders WHERE activity_id=$1`, f.activityID)
+		db.Exec(`DELETE FROM inventories WHERE activity_id=$1`, f.activityID)
+		db.Exec(`DELETE FROM activities WHERE id=$1`, f.activityID)
+		db.Exec(`DELETE FROM items WHERE id=$1`, f.itemID)
+		db.Exec(`DELETE FROM users WHERE id=ANY($1)`, f.userIDs)
+	})
+	return f
 }
 
 type fixture struct{ userID, itemID, activityID int64 }
@@ -112,6 +150,109 @@ func TestIntegrationForeignKeyConstraint(t *testing.T) {
 	if err == nil {
 		t.Fatal("activity with missing item unexpectedly inserted")
 	}
+}
+
+func TestIntegrationNaiveStrategyReproducesOverselling(t *testing.T) {
+	db := integrationDB(t)
+	db.SetMaxOpenConns(30)
+	f := seedConcurrent(t, db, 20, 5)
+	cfg := DefaultConcurrencyConfig()
+	cfg.Strategy = StrategyNaive
+	cfg.NaiveDelay = 75 * time.Millisecond
+	successes := runConcurrentSeckill(t, db, f, cfg)
+	total, available, sold, orders := concurrentState(t, db, f.activityID)
+	if successes <= int(total) || orders <= total {
+		t.Fatalf("naive baseline did not reproduce overselling: success=%d orders=%d total=%d", successes, orders, total)
+	}
+	if available < 0 || available+sold != total {
+		t.Fatalf("inventory invariant broken: total=%d available=%d sold=%d", total, available, sold)
+	}
+}
+
+func TestIntegrationConcurrencyStrategiesPreserveInvariants(t *testing.T) {
+	for _, strategy := range []InventoryStrategy{StrategyPessimistic, StrategyAtomic, StrategyOptimistic} {
+		t.Run(string(strategy), func(t *testing.T) {
+			db := integrationDB(t)
+			db.SetMaxOpenConns(50)
+			f := seedConcurrent(t, db, 40, 10)
+			cfg := DefaultConcurrencyConfig()
+			cfg.Strategy = strategy
+			cfg.LockTimeout = 2 * time.Second
+			cfg.OptimisticRetries = 20
+			cfg.OptimisticBackoff = time.Millisecond
+			runConcurrentSeckill(t, db, f, cfg)
+			total, available, sold, orders := concurrentState(t, db, f.activityID)
+			if available < 0 || available+sold != total || orders != sold || orders > total {
+				t.Fatalf("strategy=%s total=%d available=%d sold=%d orders=%d", strategy, total, available, sold, orders)
+			}
+		})
+	}
+}
+
+func TestIntegrationPessimisticLockTimeoutIsControlled(t *testing.T) {
+	db := integrationDB(t)
+	f := seedConcurrent(t, db, 1, 1)
+	locker, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer locker.Rollback()
+	if _, err = locker.Exec(`SELECT id FROM inventories WHERE activity_id=$1 FOR UPDATE`, f.activityID); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := DefaultConcurrencyConfig()
+	cfg.Strategy = StrategyPessimistic
+	cfg.LockTimeout = 50 * time.Millisecond
+	svc := NewService(db, NewRepository(db), inventory.NewRepository())
+	svc.ConfigureConcurrency(cfg)
+	_, err = svc.Seckill(context.Background(), f.userIDs[0], f.activityID, 1)
+	if !errors.Is(err, domain.ErrBusy) {
+		t.Fatalf("lock timeout error=%v, want ErrBusy", err)
+	}
+}
+
+func runConcurrentSeckill(t *testing.T, db *sql.DB, f concurrentFixture, cfg ConcurrencyConfig) int {
+	t.Helper()
+	start := make(chan struct{})
+	results := make(chan error, len(f.userIDs))
+	var wg sync.WaitGroup
+	for _, userID := range f.userIDs {
+		wg.Add(1)
+		go func(userID int64) {
+			defer wg.Done()
+			<-start
+			svc := NewService(db, NewRepository(db), inventory.NewRepository())
+			svc.ConfigureConcurrency(cfg)
+			_, err := svc.Seckill(context.Background(), userID, f.activityID, 1)
+			results <- err
+		}(userID)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	successes := 0
+	for err := range results {
+		if err == nil {
+			successes++
+			continue
+		}
+		if !errors.Is(err, domain.ErrOutOfStock) && !errors.Is(err, domain.ErrBusy) {
+			t.Fatalf("unexpected seckill error: %v", err)
+		}
+	}
+	return successes
+}
+
+func concurrentState(t *testing.T, db *sql.DB, activityID int64) (total, available, sold, orders int64) {
+	t.Helper()
+	if err := db.QueryRow(`SELECT total,available,sold FROM inventories WHERE activity_id=$1`, activityID).Scan(&total, &available, &sold); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE activity_id=$1`, activityID).Scan(&orders); err != nil {
+		t.Fatal(err)
+	}
+	return
 }
 
 func assertInventory(t *testing.T, db *sql.DB, activityID, total, available, sold int64) {

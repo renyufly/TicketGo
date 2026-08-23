@@ -1,0 +1,25 @@
+{
+  "postgresql_version": "17.6",
+  "mvcc": [
+    {
+      "isolation": "READ COMMITTED",
+      "first_read": 10,
+      "second_read_after_other_commit": 20
+    },
+    {
+      "isolation": "REPEATABLE READ",
+      "first_read": 10,
+      "second_read_after_other_commit": 10
+    }
+  ],
+  "dead_tuples": {
+    "before_vacuum": 150000,
+    "after_vacuum": 0
+  },
+  "wal": {
+    "before_lsn": "0/42687908",
+    "after_lsn": "0/43941F00",
+    "generated_bytes": "19637752",
+    "checkpoint_lsn": "0/43941F58"
+  }
+}

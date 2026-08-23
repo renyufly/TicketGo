@@ -18,6 +18,17 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Auth.AllowAdminSelfRegistration {
 		t.Fatal("AllowAdminSelfRegistration = true, want secure default false")
 	}
+	if cfg.Seckill.Strategy != "atomic" {
+		t.Fatalf("Seckill.Strategy = %q, want atomic", cfg.Seckill.Strategy)
+	}
+}
+
+func TestLoadRejectsUnknownInventoryStrategy(t *testing.T) {
+	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("SECKILL_INVENTORY_STRATEGY", "redis-before-phase3")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want inventory strategy validation error")
+	}
 }
 
 func TestLoadRejectsInvalidDuration(t *testing.T) {

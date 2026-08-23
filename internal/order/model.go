@@ -22,6 +22,9 @@ type Order struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 	CancelledAt     *time.Time `json:"cancelled_at,omitempty"`
+	// ConcurrencyRetries is experiment metadata and is not persisted. It stays
+	// absent for the default atomic strategy and zero-retry optimistic requests.
+	ConcurrencyRetries int `json:"concurrency_retries,omitempty"`
 }
 
 // 表示秒杀接口接收 { "quantity": 2 }

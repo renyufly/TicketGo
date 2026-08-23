@@ -10,6 +10,7 @@ var (
 	ErrConflict        = errors.New("conflict")
 	ErrOutOfStock      = errors.New("out of stock")
 	ErrActivityClosed  = errors.New("activity is not active")
+	ErrBusy            = errors.New("resource busy")
 )
 
 type Error struct {

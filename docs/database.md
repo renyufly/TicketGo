@@ -9,7 +9,7 @@
 | `users` | 邮箱大小写不敏感唯一；密码只保存 bcrypt 哈希；角色为 customer/admin，状态为 active/disabled。 |
 | `items` | 商品原价为正整数，状态为 active/inactive。 |
 | `activities` | 必须引用商品；结束时间晚于开始时间；状态为 draft/active/ended/cancelled。 |
-| `inventories` | 每个活动恰好一行；`total > 0`、`available/sold >= 0`、`sold + available = total`；保留 version 供 Phase 2 乐观锁实验。 |
+| `inventories` | 每个活动恰好一行；`total > 0`、`available/sold >= 0`、`sold + available = total`；version 已用于 Phase 2 乐观锁对照，默认主链路使用条件原子 UPDATE。 |
 | `orders` | 数据库主键与唯一业务号 `order_no` 分离；数量和金额必须为正；状态为 pending/paid/cancelled。 |
 | `seckill_records` | `(user_id, activity_id)` 唯一，数据库最终保证一人一活动只有一条秒杀记录；`order_id` 唯一。 |
 
@@ -19,7 +19,7 @@
 - `activities(item_id)`：外键关联与商品下活动查询；`(status, starts_at)`：活动状态/时间筛选。
 - `inventories(activity_id)`：唯一约束同时支持秒杀按活动定位库存。
 - `orders(user_id, created_at DESC, id DESC)`：用户订单稳定倒序分页；`orders(activity_id)`：活动对账。
-- Phase 1 使用有上限的 offset 分页（limit 1–100、offset 0–10000）；大数据量游标分页和执行计划对比留到 Phase 2。
+- Phase 1/2 使用有上限的 offset 分页（limit 1–100、offset 0–10000）。Phase 2 已用隔离的百万订单表完成联合索引前后执行计划、写放大与空间代价对比；业务表原有联合索引保持不变，结果见 `docs/database/postgresql-internals.md`。
 
 ## 状态机与取消规则
 

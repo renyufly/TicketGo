@@ -34,10 +34,15 @@ type Service struct {
 	now                  func() time.Time
 	afterInventoryUpdate func() error
 	beforeOrderInsert    func(*Order)
+	concurrency          ConcurrencyConfig
 }
 
 func NewService(db Beginner, r *Repository, i *inventory.Repository) *Service {
-	return &Service{db: db, repo: r, inventory: i, now: time.Now}
+	return &Service{db: db, repo: r, inventory: i, now: time.Now, concurrency: DefaultConcurrencyConfig()}
+}
+
+func (s *Service) ConfigureConcurrency(cfg ConcurrencyConfig) {
+	s.concurrency = cfg
 }
 
 // 核心-秒杀下单
@@ -75,6 +80,9 @@ func (s *Service) Seckill(ctx context.Context, userID, activityID, quantity int6
 	   这样不需要每个错误分支都手写：tx.Rollback()
 	*/
 	defer tx.Rollback()
+	if err = configureTransaction(ctx, tx, s.concurrency); err != nil {
+		return Order{}, err
+	}
 
 	// 防止重复秒杀, 先检查是否已存在参与记录
 	// 代码不仅在业务层检查一次，数据库唯一约束也会再检查一次，
@@ -87,25 +95,9 @@ func (s *Service) Seckill(ctx context.Context, userID, activityID, quantity int6
 		return Order{}, err
 	}
 
-	// 查询当前秒杀活动状态和库存
-	state, err := s.inventory.State(ctx, tx, activityID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Order{}, domain.New(domain.ErrNotFound, "activity not found", err)
-	}
-	if err != nil {
-		return Order{}, err
-	}
 	now := s.now().UTC()
-
-	// 正式检查当前是否允许秒杀
-	if err := validateSeckill(state, quantity, now); err != nil {
-		return Order{}, err
-	}
-
-	// 重点：扣库存 - TODO
-	// SetNaive 表明是 较“朴素”的库存更新方式.
-	// 后续优化重点在这里，高并发秒杀.
-	if err = s.inventory.SetNaive(ctx, tx, activityID, state.Available-quantity, state.Sold+quantity); err != nil {
+	state, retries, err := s.deductInventory(ctx, tx, activityID, quantity, now)
+	if err != nil {
 		return Order{}, err
 	}
 
@@ -148,10 +140,132 @@ func (s *Service) Seckill(ctx context.Context, userID, activityID, quantity int6
 
 	// tx.Commit()之后，数据库才正式确认这些修改
 	if err = tx.Commit(); err != nil {
-		return Order{}, err
+		return Order{}, concurrencyError(err)
 	}
 
+	o.ConcurrencyRetries = retries
 	return o, nil
+}
+
+func configureTransaction(ctx context.Context, tx *sql.Tx, cfg ConcurrencyConfig) error {
+	if cfg.LockTimeout > 0 {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('lock_timeout',$1,true)`, cfg.LockTimeout.String()); err != nil {
+			return err
+		}
+	}
+	if cfg.StatementTimeout > 0 {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('statement_timeout',$1,true)`, cfg.StatementTimeout.String()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) deductInventory(ctx context.Context, tx *sql.Tx, activityID, quantity int64, now time.Time) (inventory.SeckillState, int, error) {
+	switch s.concurrency.Strategy {
+	case StrategyNaive:
+		state, err := s.loadAndValidate(ctx, tx, activityID, quantity, now, false)
+		if err != nil {
+			return inventory.SeckillState{}, 0, err
+		}
+		if s.concurrency.NaiveDelay > 0 {
+			timer := time.NewTimer(s.concurrency.NaiveDelay)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return inventory.SeckillState{}, 0, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err := s.inventory.SetNaive(ctx, tx, activityID, state.Available-quantity, state.Sold+quantity); err != nil {
+			return inventory.SeckillState{}, 0, concurrencyError(err)
+		}
+		return state, 0, nil
+
+	case StrategyPessimistic:
+		state, err := s.loadAndValidate(ctx, tx, activityID, quantity, now, true)
+		if err != nil {
+			return inventory.SeckillState{}, 0, concurrencyError(err)
+		}
+		if err := s.inventory.SetNaive(ctx, tx, activityID, state.Available-quantity, state.Sold+quantity); err != nil {
+			return inventory.SeckillState{}, 0, concurrencyError(err)
+		}
+		return state, 0, nil
+
+	case StrategyAtomic:
+		state, err := s.loadAndValidate(ctx, tx, activityID, quantity, now, false)
+		if err != nil {
+			return inventory.SeckillState{}, 0, err
+		}
+		updated, err := s.inventory.DeductAtomic(ctx, tx, activityID, quantity)
+		if err != nil {
+			return inventory.SeckillState{}, 0, concurrencyError(err)
+		}
+		if !updated {
+			return inventory.SeckillState{}, 0, domain.New(domain.ErrOutOfStock, "insufficient inventory", nil)
+		}
+		return state, 0, nil
+
+	case StrategyOptimistic:
+		maxAttempts := s.concurrency.OptimisticRetries + 1
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			state, err := s.loadAndValidate(ctx, tx, activityID, quantity, now, false)
+			if err != nil {
+				return inventory.SeckillState{}, attempt, err
+			}
+			updated, err := s.inventory.DeductCAS(ctx, tx, activityID, quantity, state.Version)
+			if err != nil {
+				return inventory.SeckillState{}, attempt, concurrencyError(err)
+			}
+			if updated {
+				return state, attempt, nil
+			}
+			if attempt+1 < maxAttempts && s.concurrency.OptimisticBackoff > 0 {
+				delay := s.concurrency.OptimisticBackoff * time.Duration(1<<min(attempt, 8))
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return inventory.SeckillState{}, attempt + 1, ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+		return inventory.SeckillState{}, s.concurrency.OptimisticRetries, domain.New(domain.ErrBusy, "optimistic inventory retries exhausted", nil)
+	default:
+		return inventory.SeckillState{}, 0, fmt.Errorf("unknown inventory strategy %q", s.concurrency.Strategy)
+	}
+}
+
+func (s *Service) loadAndValidate(ctx context.Context, tx *sql.Tx, activityID, quantity int64, now time.Time, lock bool) (inventory.SeckillState, error) {
+	var state inventory.SeckillState
+	var err error
+	if lock {
+		state, err = s.inventory.StateForUpdate(ctx, tx, activityID)
+	} else {
+		state, err = s.inventory.State(ctx, tx, activityID)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return inventory.SeckillState{}, domain.New(domain.ErrNotFound, "activity not found", err)
+	}
+	if err != nil {
+		return inventory.SeckillState{}, err
+	}
+	if err := validateSeckill(state, quantity, now); err != nil {
+		return inventory.SeckillState{}, err
+	}
+	return state, nil
+}
+
+func concurrencyError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "55P03", "57014", "40P01":
+			return domain.New(domain.ErrBusy, "inventory is busy; retry later", err)
+		}
+	}
+	return err
 }
 
 // 检查能不能秒杀：秒杀业务规则校验器

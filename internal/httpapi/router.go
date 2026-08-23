@@ -63,7 +63,11 @@ func NewRouter(db DatabaseHealth, cfg config.Config, logger *zap.Logger) http.Ha
 	userHandler := user.NewHandler(user.NewService(user.NewRepository(db.SQL()), tokens, cfg.Auth.AllowAdminSelfRegistration))
 	itemHandler := item.NewHandler(item.NewService(item.NewRepository(db.SQL())))
 	activityHandler := activity.NewHandler(activity.NewService(activity.NewRepository(db.SQL())))
-	orderHandler := order.NewHandler(order.NewService(db.SQL(), order.NewRepository(db.SQL()), inventory.NewRepository()))
+	orderService := order.NewService(db.SQL(), order.NewRepository(db.SQL()), inventory.NewRepository())
+	if cfg.Seckill.Strategy != "" {
+		orderService.ConfigureConcurrency(cfg.Seckill)
+	}
+	orderHandler := order.NewHandler(orderService)
 
 	// 注册公开接口
 	v1 := router.Group("/api/v1")

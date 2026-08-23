@@ -1,0 +1,109 @@
+Timing is on.
+DROP TABLE
+Time: 10.790 ms
+DROP TABLE
+Time: 14.186 ms
+DROP TABLE
+Time: 39.518 ms
+CREATE TABLE
+Time: 13.043 ms
+INSERT 0 1000000
+Time: 4954.706 ms (00:04.955)
+ANALYZE
+Time: 196.310 ms
+    stage     | total_size 
+--------------+------------
+ before_index | 149 MB
+(1 row)
+
+Time: 3.559 ms
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=18709.47..18711.81 rows=20 width=72) (actual time=39.611..43.739 rows=20 loops=1)
+   Buffers: shared hit=8842 read=3746
+   ->  Gather Merge  (cost=18709.47..18719.28 rows=84 width=72) (actual time=39.609..43.735 rows=20 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8842 read=3746
+         ->  Sort  (cost=17709.45..17709.56 rows=42 width=72) (actual time=23.451..23.453 rows=16 loops=3)
+               Sort Key: created_at DESC, id DESC
+               Sort Method: top-N heapsort  Memory: 30kB
+               Buffers: shared hit=8842 read=3746
+               Worker 0:  Sort Method: quicksort  Memory: 27kB
+               Worker 1:  Sort Method: quicksort  Memory: 27kB
+               ->  Parallel Seq Scan on phase2_order_index_lab  (cost=0.00..17708.33 rows=42 width=72) (actual time=0.914..23.106 rows=33 loops=3)
+                     Filter: (user_id = 4242)
+                     Rows Removed by Filter: 333300
+                     Buffers: shared hit=8754 read=3746
+ Planning:
+   Buffers: shared hit=60 read=2
+ Planning Time: 0.902 ms
+ Execution Time: 43.832 ms
+(20 rows)
+
+Time: 47.330 ms
+CREATE INDEX
+Time: 612.161 ms
+ANALYZE
+Time: 171.554 ms
+    stage    | index_size | total_size 
+-------------+------------+------------
+ after_index | 39 MB      | 188 MB
+(1 row)
+
+Time: 1.397 ms
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..81.57 rows=20 width=72) (actual time=0.180..0.209 rows=20 loops=1)
+   Buffers: shared hit=23 read=3
+   ->  Index Scan using phase2_order_user_created_idx on phase2_order_index_lab  (cost=0.42..406.17 rows=100 width=72) (actual time=0.178..0.206 rows=20 loops=1)
+         Index Cond: (user_id = 4242)
+         Buffers: shared hit=23 read=3
+ Planning:
+   Buffers: shared hit=34 read=1
+ Planning Time: 0.784 ms
+ Execution Time: 0.239 ms
+(9 rows)
+
+Time: 1.580 ms
+DROP TABLE
+Time: 0.456 ms
+DROP TABLE
+Time: 0.323 ms
+psql:<stdin>:50: NOTICE:  table "phase2_write_no_index" does not exist, skipping
+psql:<stdin>:51: NOTICE:  table "phase2_write_with_index" does not exist, skipping
+CREATE TABLE
+Time: 3.618 ms
+CREATE TABLE
+Time: 2.467 ms
+CREATE INDEX
+Time: 2.621 ms
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Insert on phase2_write_no_index  (cost=0.00..5250.00 rows=0 width=0) (actual time=169.838..169.838 rows=0 loops=1)
+   Buffers: shared hit=202466 dirtied=1236 written=1238, temp read=171 written=171
+   ->  Function Scan on generate_series n  (cost=0.00..5250.00 rows=100000 width=112) (actual time=10.074..76.234 rows=100000 loops=1)
+         Buffers: shared hit=100000, temp read=171 written=171
+ Planning Time: 0.084 ms
+ Execution Time: 170.956 ms
+(6 rows)
+
+Time: 184.736 ms
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Insert on phase2_write_with_index  (cost=0.00..5250.00 rows=0 width=0) (actual time=352.730..352.731 rows=0 loops=1)
+   Buffers: shared hit=430731 read=1 dirtied=1931 written=2390, temp read=171 written=171
+   ->  Function Scan on generate_series n  (cost=0.00..5250.00 rows=100000 width=112) (actual time=10.754..84.124 rows=100000 loops=1)
+         Buffers: shared hit=100000, temp read=171 written=171
+ Planning Time: 0.374 ms
+ Execution Time: 353.787 ms
+(6 rows)
+
+Time: 361.702 ms
+         relname         | total_size 
+-------------------------+------------
+ phase2_write_no_index   | 9912 kB
+ phase2_write_with_index | 15 MB
+(2 rows)
+
+Time: 13.898 ms
