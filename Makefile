@@ -33,11 +33,13 @@ GO_ENV := set "GOMODCACHE=$(CURDIR)/.cache/go-mod" && set "GOCACHE=$(CURDIR)/.ca
 MKDIR_BIN := if not exist bin mkdir bin
 CHECK_NAME := if "$(NAME)"=="" (echo NAME is required & exit /b 1)
 SERVER_BIN := bin/ticketgo.exe
+PHASE2_BIN := bin/phase2lab.exe
 else
 GO_ENV := GOMODCACHE=$(CURDIR)/.cache/go-mod GOCACHE=$(CURDIR)/.cache/go-build
 MKDIR_BIN := mkdir -p bin
 CHECK_NAME := test -n "$(NAME)" || (echo "NAME is required" && exit 1)
 SERVER_BIN := bin/ticketgo
+PHASE2_BIN := bin/phase2lab
 endif
 
 # 定义数据库 migration 命令：golang-migrate 用于执行数据库迁移 SQL
@@ -46,15 +48,18 @@ MIGRATE := $(GO_ENV) $(GO_CMD) run -tags postgres github.com/golang-migrate/migr
 DATABASE_URL ?= postgres://ticketgo:ticketgo_local_password@localhost:5432/ticketgo?sslmode=disable
 
 # 告诉 Make：这些名字是“命令”，不是文件
-.PHONY: help bootstrap-go deps format lint test build run compose-up compose-down migrate-up migrate-down migrate-create web-install web-dev web-check web-e2e check
+.PHONY: help bootstrap-go bootstrap-k6 deps format lint test build run compose-up compose-down migrate-up migrate-down migrate-create phase2-tool phase2-prepare phase2-verify phase2-load phase2-postgres-labs phase2-reproduce web-install web-dev web-check web-e2e check
 
 # make help 打印可用命令
 help:
-	@echo "bootstrap-go | deps | format | lint | test | build | run | compose-up | compose-down | migrate-up | migrate-down | migrate-create NAME=name | web-install | web-dev | web-check | web-e2e | check"
+	@echo "bootstrap-go | bootstrap-k6 | deps | format | lint | test | build | run | compose-up | compose-down | migrate-up | migrate-down | migrate-create NAME=name | phase2-tool | phase2-prepare | phase2-verify | phase2-load | phase2-postgres-labs | phase2-reproduce | web-install | web-dev | web-check | web-e2e | check"
 
 # make bootstrap-go 给项目自动安装/初始化本地 Go 环境
 bootstrap-go:
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-go.ps1
+
+bootstrap-k6:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-k6.ps1
 
 # 下载 go.mod 中的 Go 依赖
 deps:
@@ -77,6 +82,25 @@ test:
 build:
 	@$(MKDIR_BIN)
 	$(GO_ENV) $(GO_CMD) build -o $(SERVER_BIN) ./cmd/server
+
+phase2-tool:
+	@$(MKDIR_BIN)
+	$(GO_ENV) $(GO_CMD) build -o $(PHASE2_BIN) ./cmd/phase2lab
+
+phase2-prepare: phase2-tool
+	$(PHASE2_BIN) prepare
+
+phase2-verify: phase2-tool
+	$(PHASE2_BIN) verify
+
+phase2-load:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-phase2-load.ps1
+
+phase2-postgres-labs:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-phase2-postgresql-labs.ps1
+
+phase2-reproduce:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reproduce-phase2.ps1
 
 # make run：启动后端
 # 注意：make run → 编译 + 立即运行

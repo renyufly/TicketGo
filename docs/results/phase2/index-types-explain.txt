@@ -1,0 +1,125 @@
+Timing is on.
+DROP TABLE
+Time: 36.338 ms
+CREATE TABLE
+Time: 22.160 ms
+INSERT 0 100000
+Time: 760.607 ms
+CREATE INDEX
+Time: 41.835 ms
+CREATE INDEX
+Time: 82.217 ms
+CREATE INDEX
+Time: 1046.966 ms (00:01.047)
+CREATE INDEX
+Time: 20.055 ms
+CREATE INDEX
+Time: 56.105 ms
+CREATE INDEX
+Time: 113.802 ms
+ANALYZE
+Time: 278.980 ms
+        indexrelname         | index_size 
+-----------------------------+------------
+ phase2_brin_created_idx     | 24 kB
+ phase2_btree_user_idx       | 2208 kB
+ phase2_expression_email_idx | 3992 kB
+ phase2_gin_metadata_idx     | 744 kB
+ phase2_gist_window_idx      | 7920 kB
+ phase2_index_types_lab_pkey | 2208 kB
+ phase2_partial_pending_idx  | 2096 kB
+(7 rows)
+
+Time: 8.152 ms
+                                                                   QUERY PLAN                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using phase2_btree_user_idx on phase2_index_types_lab  (cost=0.29..8.31 rows=1 width=130) (actual time=0.053..0.053 rows=1 loops=1)
+   Index Cond: (user_id = 4242)
+   Buffers: shared hit=4 read=2
+ Planning:
+   Buffers: shared hit=29 read=3
+ Planning Time: 0.327 ms
+ Execution Time: 0.067 ms
+(7 rows)
+
+Time: 0.783 ms
+                                                                   QUERY PLAN                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2772.54..2772.55 rows=1 width=8) (actual time=20.627..20.642 rows=1 loops=1)
+   Buffers: shared hit=2076
+   ->  Bitmap Heap Scan on phase2_index_types_lab  (cost=235.90..2689.93 rows=33043 width=0) (actual time=6.423..19.538 rows=33333 loops=1)
+         Recheck Cond: (metadata @> '{"city": "Paris"}'::jsonb)
+         Heap Blocks: exact=2040
+         Buffers: shared hit=2076
+         ->  Bitmap Index Scan on phase2_gin_metadata_idx  (cost=0.00..227.64 rows=33043 width=0) (actual time=6.236..6.236 rows=33333 loops=1)
+               Index Cond: (metadata @> '{"city": "Paris"}'::jsonb)
+               Buffers: shared hit=36
+ Planning:
+   Buffers: shared hit=13
+ Planning Time: 0.309 ms
+ Execution Time: 20.790 ms
+(13 rows)
+
+Time: 23.063 ms
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2342.54..2342.55 rows=1 width=8) (actual time=1.148..1.148 rows=1 loops=1)
+   Buffers: shared hit=113
+   ->  Bitmap Heap Scan on phase2_index_types_lab  (cost=171.90..2333.63 rows=3563 width=0) (actual time=0.712..1.020 rows=3600 loops=1)
+         Recheck Cond: (sale_window @> (CURRENT_TIMESTAMP + '02:00:00'::interval))
+         Heap Blocks: exact=75
+         Buffers: shared hit=113
+         ->  Bitmap Index Scan on phase2_gist_window_idx  (cost=0.00..171.01 rows=3563 width=0) (actual time=0.701..0.701 rows=3600 loops=1)
+               Index Cond: (sale_window @> (CURRENT_TIMESTAMP + '02:00:00'::interval))
+               Buffers: shared hit=38
+ Planning:
+   Buffers: shared hit=3
+ Planning Time: 0.279 ms
+ Execution Time: 1.291 ms
+(13 rows)
+
+Time: 3.733 ms
+                                                                              QUERY PLAN                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=2372.07..2372.08 rows=1 width=8) (actual time=2.722..2.723 rows=1 loops=1)
+   Buffers: shared hit=385
+   ->  Bitmap Heap Scan on phase2_index_types_lab  (cost=15.53..2337.78 rows=13717 width=0) (actual time=0.604..2.266 rows=13601 loops=1)
+         Recheck Cond: ((created_at >= '2026-01-02 00:00:00+00'::timestamp with time zone) AND (created_at <= '2026-01-03 00:00:00+00'::timestamp with time zone))
+         Rows Removed by Index Recheck: 4824
+         Heap Blocks: lossy=377
+         Buffers: shared hit=385
+         ->  Bitmap Index Scan on phase2_brin_created_idx  (cost=0.00..12.10 rows=18750 width=0) (actual time=0.088..0.088 rows=3770 loops=1)
+               Index Cond: ((created_at >= '2026-01-02 00:00:00+00'::timestamp with time zone) AND (created_at <= '2026-01-03 00:00:00+00'::timestamp with time zone))
+               Buffers: shared hit=8
+ Planning:
+   Buffers: shared hit=13
+ Planning Time: 0.232 ms
+ Execution Time: 2.760 ms
+(14 rows)
+
+Time: 3.630 ms
+                                                                            QUERY PLAN                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.29..1.22 rows=20 width=130) (actual time=0.044..0.047 rows=20 loops=1)
+   Buffers: shared hit=1 read=2
+   ->  Index Scan using phase2_partial_pending_idx on phase2_index_types_lab  (cost=0.29..4420.14 rows=95123 width=130) (actual time=0.043..0.045 rows=20 loops=1)
+         Buffers: shared hit=1 read=2
+ Planning:
+   Buffers: shared hit=25
+ Planning Time: 0.182 ms
+ Execution Time: 0.065 ms
+(8 rows)
+
+Time: 0.728 ms
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using phase2_expression_email_idx on phase2_index_types_lab  (cost=0.42..8.44 rows=1 width=130) (actual time=0.043..0.043 rows=1 loops=1)
+   Index Cond: (lower(email) = 'buyer4242@example.test'::text)
+   Buffers: shared hit=1 read=3
+ Planning:
+   Buffers: shared hit=3
+ Planning Time: 0.103 ms
+ Execution Time: 0.065 ms
+(7 rows)
+
+Time: 0.382 ms

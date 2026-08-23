@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"ticketgo/internal/order"
 	"ticketgo/pkg/database"
 )
 
@@ -15,6 +16,7 @@ type Config struct {
 	HTTP        HTTPConfig
 	Database    database.Config
 	Auth        AuthConfig
+	Seckill     order.ConcurrencyConfig
 }
 
 type AuthConfig struct {
@@ -42,7 +44,8 @@ func Load() (Config, error) {
 		Database: database.Config{
 			URL: env("DATABASE_URL", "postgres://ticketgo:ticketgo_local_password@localhost:5432/ticketgo?sslmode=disable"),
 		},
-		Auth: AuthConfig{JWTSecret: env("JWT_SECRET", "")},
+		Auth:    AuthConfig{JWTSecret: env("JWT_SECRET", "")},
+		Seckill: order.DefaultConcurrencyConfig(),
 	}
 
 	var err error
@@ -88,6 +91,24 @@ func Load() (Config, error) {
 	if cfg.Auth.AllowAdminSelfRegistration, err = boolean("ALLOW_ADMIN_SELF_REGISTRATION", false); err != nil {
 		return Config{}, err
 	}
+	if cfg.Seckill.Strategy, err = order.ParseInventoryStrategy(env("SECKILL_INVENTORY_STRATEGY", string(order.StrategyAtomic))); err != nil {
+		return Config{}, err
+	}
+	if cfg.Seckill.NaiveDelay, err = nonNegativeDuration("SECKILL_NAIVE_DELAY", "0s"); err != nil {
+		return Config{}, err
+	}
+	if cfg.Seckill.LockTimeout, err = duration("SECKILL_LOCK_TIMEOUT", "500ms"); err != nil {
+		return Config{}, err
+	}
+	if cfg.Seckill.StatementTimeout, err = duration("SECKILL_STATEMENT_TIMEOUT", "2500ms"); err != nil {
+		return Config{}, err
+	}
+	if cfg.Seckill.OptimisticRetries, err = nonNegativeInteger("SECKILL_OPTIMISTIC_MAX_RETRIES", 5); err != nil {
+		return Config{}, err
+	}
+	if cfg.Seckill.OptimisticBackoff, err = nonNegativeDuration("SECKILL_OPTIMISTIC_BACKOFF", "2ms"); err != nil {
+		return Config{}, err
+	}
 
 	if cfg.Database.URL == "" {
 		return Config{}, errors.New("DATABASE_URL must not be empty")
@@ -117,11 +138,29 @@ func duration(key, fallback string) (time.Duration, error) {
 	return parsed, nil
 }
 
+func nonNegativeDuration(key, fallback string) (time.Duration, error) {
+	value := env(key, fallback)
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative Go duration, got %q", key, value)
+	}
+	return parsed, nil
+}
+
 func integer(key string, fallback int) (int, error) {
 	value := env(key, strconv.Itoa(fallback))
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
 		return 0, fmt.Errorf("%s must be a positive integer, got %q", key, value)
+	}
+	return parsed, nil
+}
+
+func nonNegativeInteger(key string, fallback int) (int, error) {
+	value := env(key, strconv.Itoa(fallback))
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer, got %q", key, value)
 	}
 	return parsed, nil
 }

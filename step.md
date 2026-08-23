@@ -2,9 +2,9 @@
 
 ## 当前 Phase
 
-- 当前阶段：**Phase 1B——React 前端演示页面**。
-- 当前状态：**已完成，Phase 1B 阶段门禁已通过**。
-- 下一阶段：Phase 2——单机并发、数据库锁与 PostgreSQL 实验；尚未开始，Phase 1 的朴素并发缺陷仍保留。
+- 当前阶段：**Phase 2——单机并发、数据库锁与 PostgreSQL 实验**。
+- 当前状态：**已完成，Phase 2 阶段门禁已通过**。
+- 下一阶段：**Phase 2B——订单支付确认与超时关闭**；尚未开始。Phase 2 已选择条件原子 UPDATE，尚未加入 Redis 或其他 Phase 3+ 组件。
 
 ## 运行项目所需指令
 
@@ -20,6 +20,9 @@ Set-Location D:\Code\TicketGo
 # 仅在项目内安装锁定的 Go 1.27.0；不会安装 MSI 或修改系统 PATH
 make bootstrap-go
 
+# Phase 2 完整复现需要；便携版只写入 .tools/k6，不修改系统 PATH
+make bootstrap-k6
+
 # 只在 .env 不存在时创建，避免覆盖已有本地配置
 if (-not (Test-Path .env)) {
     Copy-Item .env.example .env
@@ -32,6 +35,12 @@ if (-not (Test-Path .env)) {
 JWT_SECRET=replace-with-your-own-random-secret-at-least-32-characters
 AUTH_TOKEN_TTL=24h
 ALLOW_ADMIN_SELF_REGISTRATION=false
+SECKILL_INVENTORY_STRATEGY=atomic
+SECKILL_NAIVE_DELAY=0s
+SECKILL_LOCK_TIMEOUT=500ms
+SECKILL_STATEMENT_TIMEOUT=2500ms
+SECKILL_OPTIMISTIC_MAX_RETRIES=5
+SECKILL_OPTIMISTIC_BACKOFF=2ms
 ```
 
 如果本机 5432 已被其他 PostgreSQL 占用，在 `.env` 中同步修改映射端口与连接地址：
@@ -58,7 +67,7 @@ docker compose ps
 
 预期 `ticketgo-postgres-1` 为 `healthy`。
 
-可确认 Phase 1 migration 已应用到 version 2：
+可确认当前业务 migration 已应用到 version 2。Phase 2 使用 Phase 1 已有的 `inventories.version` 与订单索引，不新增业务 migration：
 
 ```powershell
 docker compose exec postgres psql -U ticketgo -d ticketgo -c "SELECT version, dirty FROM schema_migrations;"
@@ -107,7 +116,7 @@ VITE_ALLOW_ADMIN_REGISTRATION=true
 
 两个开关必须同时开启并重启前后端。前端开关只控制显示，后端开关才决定是否允许创建 admin；生产环境禁止开启。随后可完全通过页面执行 admin 建商品/活动 → 退出切换 customer → 秒杀 → 查单 → 取消 → 查看库存回补 → 查看系统状态的闭环。
 
-### 5. 跑通 Phase 1 API 命令行闭环（可选）
+### 5. 跑通 API 命令行闭环（可选）
 
 以下指令在另一个 PowerShell 终端执行。先注册管理员账号，再通过仅限本地开发的数据库命令提升角色；提升后必须重新登录，因为旧 JWT 中的角色不会作为最终授权依据，但重新登录便于验证完整流程。
 
@@ -185,9 +194,56 @@ Remove-Item Env:TEST_DATABASE_URL
 make web-e2e
 ```
 
-未设置 `TEST_DATABASE_URL` 时，涉及真实数据库的测试会安全跳过；Phase 1 门禁验证必须显式设置该变量并确认测试全部通过。
+未设置 `TEST_DATABASE_URL` 时，涉及真实数据库的测试会安全跳过；Phase 2 完整性检查必须显式设置该变量，才能覆盖真实 PostgreSQL 的超卖复现、三种修复策略和锁超时回滚。
 
-### 7. 停止项目
+### 7. 完整复现 Phase 2
+
+前置条件：Docker Desktop 已启动、`.env` 已配置、项目内 Go 与 k6 已准备，并且 8080 端口没有其他服务监听。复现脚本会按策略自行启动和停止 TicketGo，因此执行时不要同时运行 `make run`。
+
+```powershell
+Set-Location D:\Code\TicketGo
+
+# 如尚未准备项目内工具，只需执行一次
+make bootstrap-go
+make bootstrap-k6
+
+# 一条命令完成数据库启动/migration、负载对照、结果汇总和 PostgreSQL 专项实验
+make phase2-reproduce
+```
+
+`make phase2-reproduce` 严格按以下顺序执行：
+
+1. 启动 Compose PostgreSQL 并执行 migration。
+2. 对 `naive`、`pessimistic`、`atomic`、`optimistic` 使用同一正式参数各跑 3 轮：1000 个唯一用户、1000 次请求、100 张库存、200 VU。
+3. 对乐观锁跑 3 轮低冲突对照：100 个唯一用户、100 张库存、1 VU；正式热点结果已由上一步提供。
+4. 汇总 QPS、P50/P95/P99、错误、CAS 重试、PostgreSQL CPU、锁等待、活动会话和正确性结果。
+5. 运行 MVCC、Dead Tuple/VACUUM、WAL、百万订单联合索引 before/after，以及 B-Tree/GIN/GiST/BRIN/Partial/Expression 索引实验。
+
+需要分步复现或调试时，可执行等价命令：
+
+```powershell
+# 正式热点场景：四种策略各 3 轮
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-phase2-load.ps1 -Runs 3 -Users 1000 -Stock 100 -VUs 200
+
+# 乐观锁低冲突场景：3 轮
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-phase2-load.ps1 -Strategies optimistic -Runs 3 -Users 100 -Stock 100 -VUs 1 -LabelSuffix low
+
+# 从 raw 数据重建可提交汇总
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/summarize-phase2-results.ps1
+
+# PostgreSQL 专项与百万订单索引实验
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-phase2-postgresql-labs.ps1
+```
+
+仅排查单一策略时可缩短为 1 轮；`LabelSuffix` 用于避免覆盖正式结果：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-phase2-load.ps1 -Strategies atomic -Runs 1 -Users 1000 -Stock 100 -VUs 200 -LabelSuffix debug
+```
+
+正式汇总保存在 `docs/results/phase2/concurrency-summary.json`；百万订单、索引类型和 PostgreSQL 内部机制结果位于同一目录。每轮 k6、库存校验、锁/事务时长与 Docker CPU 采样原始文件写入被 Git 忽略的 `docs/results/phase2/raw/`。脚本只重建明确命名的 `phase2_*_lab` 隔离表，并清理由自身创建的 `phase2-load-*` 匿名用户和 `[phase2]` 数据，不会清理真实业务用户。
+
+### 8. 停止项目
 
 先在运行服务的终端按 `Ctrl+C` 停止 Go 服务，再执行：
 
@@ -539,3 +595,104 @@ XXX 2026 巴黎演唱会门票
 └── 最终补票：¥1,180，库存 20
 
 > 因此，“商品 / 门票”相当于商品档案；“秒杀活动”才是用户实际参加和下单的销售场次
+
+## 2026-08-23：Phase 2 单机并发、数据库锁与 PostgreSQL 实验
+
+### 执行依据与范围
+
+- 严格执行 `plan.md` Phase 2，并参考 `Idea.md` 中“1000 人抢 100 张票”、read-modify-write 超卖、三种数据库并发控制、百万订单索引和 PostgreSQL 专项实验背景。
+- 本阶段只处理同步 PostgreSQL 并发正确性与数据库实验；没有实现 Phase 2B 支付/超时关单，也没有引入 Redis、Kafka、Nginx、gRPC、etcd、微服务或进程内互斥锁。
+- 主业务 schema 无需新增 migration：`inventories.version` 与订单联合索引在 Phase 1 已存在；before/after 索引和内部机制实验全部使用明确命名的 `phase2_*_lab` 隔离表，不为实验破坏业务索引。
+
+### 环境与工具处理过程
+
+1. 继续使用项目 `.tools/go` 中锁定的 Go 1.27.0，以及 `.cache/go-mod` / `.cache/go-build`，没有安装或修改全局 Go。
+2. 当前机器没有 k6。查询 Grafana 官方文档和官方 GitHub Release 后锁定 k6 v2.2.0；新增 `scripts/bootstrap-k6.ps1`，把 Windows amd64 便携版下载到 `.tools/k6/k6.exe`，并用官方发布校验值 `ceb2b1...e8d9f4` 验证 SHA-256。没有执行 winget/choco/MSI，也没有修改系统 PATH。
+3. PostgreSQL 继续使用项目 Docker Compose 的 17.6 Alpine 容器和 55432 宿主端口；未安装全局 PostgreSQL。容器未设置 CPU/内存硬限制，实验报告已明确这一点。
+4. 新增 `cmd/phase2lab` 项目内工具，构建到 `bin/phase2lab.exe`；生成的短期 JWT 数据集写到被 Git 忽略的 `tests/load/.generated`，不包含真实账号或个人信息。
+5. 初次用 1000 VU 瞬时连接时，本机 Windows TCP accept/backlog 出现大量 connection refused。该无效轮次未纳入结果；正式场景保持 1000 个唯一用户、1000 请求、100 库存不变，把 VU 固定为 200，并对全部方案使用相同参数。
+6. 最终 `make check` 发现 Windows CRLF 使前端 Prettier 把全部文件误判为需改写；新增 `web/.prettierrc.json` 的 `endOfLine=auto` 后，未批量改动既有前端源码，Windows 本地与 Linux CI 均可按各自 checkout 换行通过同一格式门禁。
+
+### 核心实现过程
+
+1. 在库存 Repository 增加 `StateForUpdate`、`DeductAtomic` 和 `DeductCAS` 明确 SQL；朴素 `SetNaive` 只保留为实验基线。
+2. 在订单 Service 建立 `naive`、`pessimistic`、`atomic`、`optimistic` 四种可配置策略。乐观锁默认最多重试 5 次、2ms 起指数退避，禁止无限自旋。
+3. 默认配置固定为 `SECKILL_INVENTORY_STRATEGY=atomic`。每个秒杀事务使用 500ms lock timeout 和 2500ms statement timeout；锁超时、语句取消、deadlock 与 CAS 重试耗尽转换为稳定 `concurrency_busy`。
+4. 库存扣减、订单创建与秒杀记录继续位于同一事务；库存等式、订单上限和 `(user_id, activity_id)` 唯一防线全部保留。
+5. 增加真实 PostgreSQL 并发集成测试：朴素策略必须稳定复现超卖；三种修复策略必须满足库存/订单不变量；显式持锁 50ms 超时必须返回受控繁忙错误。
+6. 增加 k6 脚本、数据准备/清理/校验工具、三轮自动运行脚本、50ms PostgreSQL 锁等待采样、Docker CPU 采样和结果汇总脚本。
+
+### 正式 1000 抢 100 实验结果
+
+固定环境：200 VU、1000 个唯一用户、1000 请求、100 库存、DB max open 25；每个方案重建数据后运行 3 轮。表中为三轮均值：
+
+| 方案 | 成功/售罄 | 正确性 | QPS | P50 | P95 | P99 | PostgreSQL CPU 峰值 | 峰值锁等待者 | 最长活动事务峰值均值 |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 朴素基线 | 1000/0 | 失败，三轮均超卖 | 292.77 | 546.59ms | 1302.73ms | 1730.20ms | 66.59% | 15.33 | 177.839ms |
+| 悲观锁 | 100/900 | 通过 | 1083.77 | 124.69ms | 459.00ms | 570.24ms | 130.77% | 24.00 | 354.664ms |
+| 条件原子 UPDATE | 100/900 | 通过 | **1561.46** | **66.66ms** | **401.82ms** | **457.16ms** | 92.17% | 23.67 | 266.703ms |
+| 乐观锁 CAS | 100/900 | 通过 | 1047.48 | 68.18ms | 714.50ms | 775.02ms | 78.30% | 24.00 | 194.015ms |
+
+- 朴素方案三轮都创建 1000 个订单，但库存行只记录 `sold=40/41`、`available=60/59`，证明 CHECK 等式成立仍不能阻止跨表超卖。
+- 三种修复方案的每一轮均为 `available=0`、`sold=100`、订单=100、秒杀记录=100、重复买家=0、意外错误率=0。
+- 乐观锁无竞争对照使用 1 VU、100 用户、100 库存，三轮均为 0 次重试，P95 6.11–6.92ms；热点成功请求约需 1.02–1.04 次额外 CAS 尝试。
+- 活动会话达到 25、热点锁等待者达到 23–24，悲观锁的最长活动事务峰值均值为 354.664ms，证明 PostgreSQL 单库存行串行化已经成为瓶颈；增加 HTTP 并发不会消除该上限。
+- ADR-0001 正式选择条件原子 UPDATE 作为默认主链路；悲观锁保留为回滚方案，乐观锁保留为实验对照，naive 禁止用于正常运行。
+
+### 百万订单与 PostgreSQL 专项实验
+
+| 实验 | 实测结果 |
+| --- | --- |
+| 百万订单查询（无联合索引） | Parallel Seq Scan + top-N sort，43.832ms，12,588 buffers |
+| 建联合 B-Tree 后 | Index Scan，0.239ms，26 buffers；联合索引 39MiB，总大小 149MiB → 188MiB |
+| 10 万行写代价 | 无联合索引 170.956ms；有联合索引 353.787ms，约 2.07 倍 |
+| MVCC | READ COMMITTED 第二次读 20；REPEATABLE READ 第二次仍读快照值 10 |
+| Dead Tuple / VACUUM | 10 万 UPDATE + 5 万 DELETE 后约 150,000 dead tuple；VACUUM 后为 0 |
+| WAL | 一轮建表/插入/更新生成 19,637,752 bytes WAL；CHECKPOINT LSN 正常推进 |
+| 索引类型 | B-Tree、GIN、GiST、BRIN、Partial、Expression 均完成实际 EXPLAIN |
+
+结果与解释位于 `docs/results/phase2/`、`docs/phase2-concurrency-report.md`、`docs/database/postgresql-internals.md`、`docs/database/mysql-vs-postgresql.md` 和 `docs/adr/0001-inventory-concurrency-control.md`。
+
+### Phase 2 复现指令
+
+```powershell
+# 首次准备项目内工具；不会修改全局版本或系统 PATH
+make bootstrap-go
+make bootstrap-k6
+
+# 完整闭环：四策略热点各 3 轮 + 乐观锁低冲突 3 轮 + 汇总 + PostgreSQL 实验
+# 运行前必须释放 8080；脚本会自行启动/停止各策略服务
+make phase2-reproduce
+```
+
+完整分步命令、输出位置、调试单轮命令和项目启动指令已集中写在本文开头“运行项目所需指令”，避免历史进度与现行操作说明产生两套口径。
+
+### 对照 `plan.md` 的完整性审计
+
+| Phase 2 计划项 | 实现与可复核证据 | 状态 |
+| --- | --- | --- |
+| 1. 基线与工具 | `tests/load/phase2-seckill.js`、`cmd/phase2lab prepare/verify/monitor`、三轮运行脚本；采集吞吐、P50/P95/P99、错误率、CPU、锁等待、活动会话和最长活动事务时长 | 完整 |
+| 2. 稳定复现超卖 | `naive` read-modify-write 配合 75ms 实验延迟；真实 PostgreSQL 集成测试与正式三轮均复现跨表超卖，报告给出时序解释 | 完整 |
+| 3. 悲观锁 | `SELECT ... FOR UPDATE`；事务内 500ms lock timeout/2500ms statement timeout；持锁集成测试验证受控 `concurrency_busy` 与回滚，监控记录等待和事务持有时长 | 完整 |
+| 4. 条件原子更新 | `UPDATE ... WHERE available >= quantity RETURNING`，与订单/秒杀记录处于同一事务；库存不足由零返回行判断 | 完整 |
+| 5. 乐观锁 | `inventories.version` CAS、最多 5 次重试、2ms 指数退避；1000 抢 100 热点和 1 VU 低冲突各 3 轮，并记录重试次数 | 完整 |
+| 6. 选型与 ADR | `docs/adr/0001-inventory-concurrency-control.md` 基于三轮数据选择 atomic，说明悲观锁回滚方案和策略切换配置 | 完整 |
+| 7. 百万订单索引 | 隔离表生成 100 万订单，保存联合索引前后 EXPLAIN、查询耗时/buffers、索引空间和 10 万行写入代价 | 完整 |
+| 8. PostgreSQL 专项 | 实跑 MVCC、Dead Tuple/VACUUM、WAL/CHECKPOINT 与六类索引；PostgreSQL/MySQL 差异文档已完成 | 完整 |
+| 阶段门禁 | 同环境三轮对比；三种修复均满足库存非负、订单不超过初始库存、一人一单；瓶颈由单库存行锁等待和活动会话证据解释 | 通过 |
+
+审计结论：Phase 2 的 8 个执行步骤和阶段门禁均已完整实现，没有遗漏 `plan.md` 要求。正式压力口径是“1000 个唯一用户发出 1000 请求争抢 100 张票”；本机 1000 VU 瞬时建连会先触发 Windows TCP backlog，属于无效客户端瓶颈，因此所有策略公平固定为 200 VU，且该偏差和原因已在报告中明确披露。
+
+### 门禁与当前进度
+
+| 检查项 | 结果 |
+| --- | --- |
+| 三种并发控制同环境三轮对比 | 通过 |
+| 1000 抢 100 不超卖/库存非负/一人一单 | 三种修复方案全部通过 |
+| 朴素 lost update 稳定复现 | 通过，三轮全部超卖 |
+| 锁等待超时受控失败 | 通过，映射 `concurrency_busy` 且事务回滚；监控同时记录最长活动事务时长 |
+| 百万订单 before/after EXPLAIN | 通过 |
+| MVCC/VACUUM/WAL/六类索引 | 通过 |
+| 默认方案与 ADR 固化 | 通过，默认 atomic |
+
+Phase 2 阶段门禁现已通过。PostgreSQL 容器当前保持 healthy，临时 Gin/k6/监控进程均已停止，8080 端口已释放。实验表和最后一轮匿名测试数据保存在项目 PostgreSQL 数据卷，方便复核；再次运行脚本只清理明确命名的 Phase 2 数据。下一步严格进入 Phase 2B，不提前实现 Redis。

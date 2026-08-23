@@ -34,6 +34,8 @@ func Write(c *gin.Context, err error) {
 		status, code = http.StatusConflict, "out_of_stock"
 	case errors.Is(err, domain.ErrActivityClosed):
 		status, code = http.StatusConflict, "activity_unavailable"
+	case errors.Is(err, domain.ErrBusy):
+		status, code = http.StatusServiceUnavailable, "concurrency_busy"
 	}
 	response.Error(c, response.NewError(status, code, message, err))
 }

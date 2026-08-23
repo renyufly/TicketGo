@@ -10,4 +10,6 @@ coverage.out
 web/node_modules/
 web/dist/
 web/coverage/
+tests/load/.generated/
+docs/results/phase2/raw/
 

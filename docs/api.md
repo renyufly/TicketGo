@@ -1,4 +1,4 @@
-# Phase 1 API
+# Phase 2 API
 
 所有业务接口位于 `/api/v1`。错误响应固定包含 `code`、`message`、`request_id`；成功响应包含 `data` 和 `request_id`。除注册和登录外均需 `Authorization: Bearer <token>`。
 
@@ -16,6 +16,8 @@
 | `POST /orders/:id/cancel` | 登录 | 取消自己的 pending 订单并回补库存 |
 
 列表参数为 `limit`（默认 20，最大 100）与 `offset`（默认 0，最大 10000），排序固定为 `created_at DESC, id DESC`。
+
+Phase 2 秒杀默认使用 PostgreSQL 条件原子 UPDATE。库存竞争结束后返回 HTTP 409 / `out_of_stock`；悲观锁超时、statement timeout、deadlock 或乐观锁重试耗尽统一返回 HTTP 503 / `concurrency_busy`，客户端可以有界重试。实验性 optimistic 成功响应可能带 `concurrency_retries`；默认 atomic 响应不显示该字段。API 不把 PostgreSQL 错误码直接泄露给客户端。
 
 注册请求可传 `role: "customer" | "admin"`，缺省为 customer。admin 匿名注册受 `ALLOW_ADMIN_SELF_REGISTRATION` 控制且默认关闭；关闭时返回 HTTP 403 / `forbidden`，非法 role 返回 HTTP 400。该能力只用于 Phase 1B 本地演示，生产环境禁止开启，真实部署应由受控初始化、邀请或运维流程创建管理员。
 
